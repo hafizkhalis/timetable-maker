@@ -269,8 +269,17 @@ body {
   bottom: 0;
   background: linear-gradient(to top, #07071a 60%, transparent);
   padding: 20px 0 8px;
-  text-align: center;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.export-info {
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }
 .btn-export {
   background: linear-gradient(135deg, #10b981, #059669);
@@ -593,9 +602,6 @@ body {
    PHONE WALLPAPER PREVIEW (matches original format)
    ══════════════════════════════════════════════════ */
 .phone-wrap {
-  width: 390px;
-  min-height: 844px;
-  border-radius: 50px;
   padding: 24px 16px 36px;
   position: relative;
   overflow: hidden;
@@ -775,6 +781,106 @@ body {
 }
 
 /* ══════════════════════════════════════
+   FORMAT SELECTOR
+   ══════════════════════════════════════ */
+.format-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.format-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.25s;
+}
+.format-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.7);
+}
+.format-btn.active {
+  background: rgba(139,92,246,0.2);
+  border-color: rgba(139,92,246,0.45);
+  color: #c4b5fd;
+}
+.format-name {
+  font-size: 11px;
+  font-weight: 600;
+}
+.format-desc {
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+/* ══════════════════════════════════════
+   PREVIEW SCALER
+   ══════════════════════════════════════ */
+.preview-scaler {
+  overflow: hidden;
+  transition: width 0.3s ease, height 0.3s ease;
+}
+#phonePreview {
+  transform-origin: top center;
+  transition: transform 0.3s ease;
+}
+
+/* ══════════════════════════════════════
+   FORMAT-SPECIFIC STYLES
+   ══════════════════════════════════════ */
+.phone-wrap.format-ipad {
+  padding: 28px 22px 40px;
+}
+.phone-wrap.format-ipad .group-name { font-size: 22px; }
+.phone-wrap.format-ipad .pill-code { font-size: 10px; }
+.phone-wrap.format-ipad .pill-type { font-size: 9px; }
+.phone-wrap.format-ipad .pill-room { font-size: 9px; }
+.phone-wrap.format-ipad .time-col-header { font-size: 10px; }
+.phone-wrap.format-ipad .day-abbr { font-size: 10px; }
+
+.phone-wrap.format-desktop {
+  padding: 40px 60px;
+}
+.phone-wrap.format-desktop .header-glass {
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 16px;
+  padding: 12px 18px;
+}
+.phone-wrap.format-desktop .timetable-card { border-radius: 16px; }
+.phone-wrap.format-desktop .group-label { font-size: 9px; margin-bottom: 2px; }
+.phone-wrap.format-desktop .group-name { font-size: 20px; margin-bottom: 1px; }
+.phone-wrap.format-desktop .semester-text { font-size: 11px; }
+.phone-wrap.format-desktop .pill-code { font-size: 11px; }
+.phone-wrap.format-desktop .pill-type { font-size: 9px; }
+.phone-wrap.format-desktop .pill-room { font-size: 9px; }
+.phone-wrap.format-desktop .time-col-header { font-size: 10px; padding: 10px 6px; }
+.phone-wrap.format-desktop .day-abbr { font-size: 10px; }
+.phone-wrap.format-desktop .day-row { min-height: 64px; }
+.phone-wrap.format-desktop .footer-glass { font-size: 11px; margin-top: 10px; }
+.phone-wrap.format-desktop .class-pill { padding: 5px 6px; border-radius: 8px; }
+.phone-wrap.format-desktop .blob-1 {
+  width: 400px; height: 400px;
+  top: -120px; right: -120px;
+}
+.phone-wrap.format-desktop .blob-2 {
+  width: 450px; height: 450px;
+  bottom: -100px; left: -150px;
+}
+.phone-wrap.format-desktop .blob-3 {
+  width: 300px; height: 300px;
+}
+
+/* ══════════════════════════════════════
    RESPONSIVE
    ══════════════════════════════════════ */
 @media (max-width: 960px) {
@@ -785,5 +891,4 @@ body {
   }
   .preview-panel { position: static; }
   .editor { max-width: 600px; width: 100%; }
-  .phone-wrap { transform: scale(0.85); transform-origin: top center; }
 }

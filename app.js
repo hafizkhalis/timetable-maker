@@ -24,11 +24,19 @@ const THEMES = [
   { name: 'AMOLED',   stops: ['#000000', '#050510', '#0a0a1a', '#0f0f20'] },
 ];
 
+const EXPORT_FORMATS = [
+  { key: 'iphone',      name: 'iPhone',        desc: '1170 × 2532', w: 390, h: 844, radius: 50, exportScale: 3, fixed: false },
+  { key: 'ipad',        name: 'iPad',          desc: '2048 × 2732', w: 512, h: 683, radius: 24, exportScale: 4, fixed: false },
+  { key: 'desktop169',  name: 'Desktop 16:9',  desc: '1920 × 1080', w: 960, h: 540, radius: 0,  exportScale: 2, fixed: true  },
+  { key: 'desktop1610', name: 'Desktop 16:10', desc: '1920 × 1200', w: 960, h: 600, radius: 0,  exportScale: 2, fixed: true  },
+];
+
 /* ══════════════════════════════════════
    STATE
    ══════════════════════════════════════ */
 let state = {
   theme: 0,
+  exportFormat: 'iphone',
   customGradient: null,
   timeSlots: ['08:00 AM', '10:30 AM', '02:00 PM'],
   activeDays: ['sun', 'mon', 'tue', 'wed', 'thu'],
@@ -181,6 +189,51 @@ function getGradientCSS() {
   const t = THEMES[state.theme] || THEMES[0];
   const pcts = t.stops.map((c, i) => `${c} ${Math.round(i / (t.stops.length - 1) * 100)}%`);
   return `linear-gradient(135deg, ${pcts.join(', ')})`;
+}
+
+/* ══════════════════════════════════════
+   EXPORT FORMATS
+   ══════════════════════════════════════ */
+function getFormat() {
+  return EXPORT_FORMATS.find(f => f.key === state.exportFormat) || EXPORT_FORMATS[0];
+}
+
+function selectFormat(key) {
+  state.exportFormat = key;
+  saveState();
+  renderFormatSelector();
+  render();
+}
+
+function renderFormatSelector() {
+  const c = document.getElementById('formatSelector');
+  if (!c) return;
+  c.innerHTML = EXPORT_FORMATS.map(f => {
+    const active = state.exportFormat === f.key ? 'active' : '';
+    return `<button class="format-btn ${active}" onclick="selectFormat('${f.key}')">
+      <span class="format-name">${esc(f.name)}</span>
+      <span class="format-desc">${f.desc}</span>
+    </button>`;
+  }).join('');
+  const fmt = getFormat();
+  const info = document.getElementById('exportInfo');
+  if (info) info.textContent = `${fmt.name} \u00b7 ${fmt.desc}`;
+}
+
+function updatePreviewScale() {
+  const fmt = getFormat();
+  const maxW = Math.min(420, window.innerWidth - 64);
+  const s = Math.min(1, maxW / fmt.w);
+  const preview = document.getElementById('phonePreview');
+  const scaler = document.getElementById('previewScaler');
+  if (preview) {
+    preview.style.transform = `scale(${s})`;
+    preview.style.transformOrigin = 'top center';
+  }
+  if (scaler) {
+    scaler.style.width = (fmt.w * s) + 'px';
+    scaler.style.height = (fmt.h * s) + 'px';
+  }
 }
 
 /* ══════════════════════════════════════
@@ -512,16 +565,23 @@ function render() {
   const footerText = document.getElementById('footerText').value;
   const spacerTop = parseInt(document.getElementById('spacerTop').value) || 0;
   const spacerBottom = parseInt(document.getElementById('spacerBottom').value) || 0;
+  const fmt = getFormat();
+  const isDesktop = fmt.fixed;
   const cols = state.timeSlots.length;
-  const gridCols = `52px ${'1fr '.repeat(cols).trim()}`;
+  const dayCol = isDesktop ? '72px' : '52px';
+  const gridCols = `${dayCol} ${'1fr '.repeat(cols).trim()}`;
   const gradient = getGradientCSS();
+  const sizeStyle = fmt.fixed
+    ? `width:${fmt.w}px;height:${fmt.h}px;`
+    : `width:${fmt.w}px;min-height:${fmt.h}px;`;
+  const fmtClass = isDesktop ? 'format-desktop' : (fmt.key === 'ipad' ? 'format-ipad' : '');
 
   let html = `
-    <div class="phone-wrap" id="exportTarget" style="background:${gradient};">
+    <div class="phone-wrap ${fmtClass}" id="exportTarget" style="${sizeStyle}border-radius:${fmt.radius}px;background:${gradient};">
       <div class="blob blob-1"></div>
       <div class="blob blob-2"></div>
       <div class="blob blob-3"></div>
-      <div class="phone-spacer">${'<br>'.repeat(spacerTop)}</div>
+      ${isDesktop ? '' : `<div class="phone-spacer">${'<br>'.repeat(spacerTop)}</div>`}
   `;
 
   if (showHeader) {
@@ -577,10 +637,11 @@ function render() {
     html += `<div class="footer-glass">${esc(footerText)}</div>`;
   }
 
-  html += `<div class="phone-spacer">${'<br>'.repeat(spacerBottom)}</div>`;
+  if (!isDesktop) html += `<div class="phone-spacer">${'<br>'.repeat(spacerBottom)}</div>`;
   html += `</div>`;
 
   document.getElementById('phonePreview').innerHTML = html;
+  updatePreviewScale();
 }
 
 /* ══════════════════════════════════════
@@ -591,15 +652,16 @@ async function exportPNG() {
   if (!target) return;
   showToast('Generating PNG...');
   try {
+    const fmt = getFormat();
     const canvas = await html2canvas(target, {
-      scale: 3,
+      scale: fmt.exportScale,
       backgroundColor: null,
       useCORS: true,
       logging: false,
     });
     const link = document.createElement('a');
     const name = document.getElementById('groupName').value || 'timetable';
-    link.download = `${name}_timetable.png`;
+    link.download = `${name}_${fmt.key}_timetable.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
     showToast('PNG exported successfully!');
@@ -733,6 +795,7 @@ document.addEventListener('keydown', e => {
    ══════════════════════════════════════ */
 function fullRender() {
   renderThemes();
+  renderFormatSelector();
   renderTimeSlots();
   renderDays();
   renderSubjects();
@@ -745,3 +808,4 @@ loadState();
 loadFormFields();
 updateGradHex();
 fullRender();
+window.addEventListener('resize', updatePreviewScale);
