@@ -826,10 +826,11 @@ body {
    ══════════════════════════════════════ */
 .preview-scaler {
   overflow: hidden;
+  margin: 0 auto;
   transition: width 0.3s ease, height 0.3s ease;
 }
 #phonePreview {
-  transform-origin: top center;
+  transform-origin: top left;
   transition: transform 0.3s ease;
 }
 

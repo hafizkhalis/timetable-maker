@@ -229,7 +229,7 @@ function updatePreviewScale() {
   const target = document.getElementById('exportTarget');
   if (preview) {
     preview.style.transform = `scale(${s})`;
-    preview.style.transformOrigin = 'top center';
+    preview.style.transformOrigin = 'top left';
   }
   if (scaler) {
     const actualH = target ? target.offsetHeight : fmt.h;
