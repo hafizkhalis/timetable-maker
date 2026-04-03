@@ -226,13 +226,16 @@ function updatePreviewScale() {
   const s = Math.min(1, maxW / fmt.w);
   const preview = document.getElementById('phonePreview');
   const scaler = document.getElementById('previewScaler');
+  const target = document.getElementById('exportTarget');
   if (preview) {
     preview.style.transform = `scale(${s})`;
     preview.style.transformOrigin = 'top center';
   }
   if (scaler) {
-    scaler.style.width = (fmt.w * s) + 'px';
-    scaler.style.height = (fmt.h * s) + 'px';
+    const actualH = target ? target.offsetHeight : fmt.h;
+    const actualW = target ? target.offsetWidth : fmt.w;
+    scaler.style.width = (actualW * s) + 'px';
+    scaler.style.height = (actualH * s) + 'px';
   }
 }
 
