@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>T5CS2303C2 Timetable</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: 'Inter', sans-serif;
+      background: #0d0d1a;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 16px 60px;
+    }
+
+    /* ── Phone frame ── */
+    .phone-wrap {
+      /* width: 390px; */
+      width: 390px;
+      min-height: 844px;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 30%, #0f3460 60%, #533483 100%);
+      border-radius: 50px;
+      padding: 24px 16px 36px;
+      position: relative;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.08),
+        0 40px 80px rgba(0,0,0,0.6),
+        0 10px 30px rgba(83,52,131,0.4);
+      margin-top: 40px;
+    }
+
+    /* ── Background glow blobs ── */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      filter: blur(1px);
+    }
+    .blob-1 {
+      top: -70px; right: -70px;
+      width: 280px; height: 280px;
+      background: radial-gradient(circle, rgba(167,139,250,0.38) 0%, transparent 70%);
+    }
+    .blob-2 {
+      bottom: 60px; left: -90px;
+      width: 320px; height: 320px;
+      background: radial-gradient(circle, rgba(56,189,248,0.26) 0%, transparent 70%);
+    }
+    .blob-3 {
+      top: 45%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 220px; height: 220px;
+      background: radial-gradient(circle, rgba(244,114,182,0.16) 0%, transparent 70%);
+    }
+
+    /* ── Notch ── */
+    .notch {
+      width: 120px;
+      height: 28px;
+      background: #07071a;
+      border-radius: 0 0 20px 20px;
+      margin: 0 auto 20px;
+    }
+
+    /* ── Header card ── */
+    .header-glass {
+      background: rgba(255,255,255,0.10);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 20px;
+      padding: 14px 18px;
+      margin-bottom: 14px;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .header-glass::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .group-label {
+      font-size: 10px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.50);
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .group-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.5px;
+      margin-bottom: 3px;
+    }
+    .semester {
+      font-size: 11px;
+      font-weight: 300;
+      color: rgba(255,255,255,0.42);
+    }
+
+    /* ── Main timetable card ── */
+    .timetable-card {
+      background: rgba(255,255,255,0.07);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 24px;
+      overflow: hidden;
+      position: relative;
+      z-index: 1;
+    }
+    .timetable-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+      pointer-events: none;
+    }
+
+    /* ── Grid layout ── */
+    .grid-row {
+      display: grid;
+      grid-template-columns: 52px 1fr 1fr 1fr;
+    }
+
+    /* ── Time header row ── */
+    .time-header-row {
+      border-bottom: 1px solid rgba(255,255,255,0.09);
+    }
+    .corner-cell { background: transparent; }
+    .time-col-header {
+      padding: 11px 4px;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.45);
+      letter-spacing: 0.6px;
+      border-left: 1px solid rgba(255,255,255,0.07);
+    }
+
+    /* ── Day rows ── */
+    .day-row {
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      min-height: 84px;
+    }
+    .day-row:last-child { border-bottom: none; }
+
+    .day-label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 8px 4px;
+      border-right: 1px solid rgba(255,255,255,0.07);
+    }
+    .day-abbr {
+      font-size: 9px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.65);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+    .day-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+    }
+
+    /* ── Cells ── */
+    .cell {
+      padding: 5px 4px;
+      border-left: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      align-items: stretch;
+    }
+    .cell.empty { background: transparent; }
+
+    /* ── Subject pills ── */
+    .class-pill {
+      border-radius: 10px;
+      padding: 6px 7px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      position: relative;
+      overflow: hidden;
+    }
+    .class-pill::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: rgba(255,255,255,0.28);
+      border-radius: 10px 10px 0 0;
+    }
+    .pill-code {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      opacity: 0.95;
+    }
+    .pill-type {
+      font-size: 8px;
+      font-weight: 400;
+      opacity: 0.65;
+    }
+    .pill-room {
+      font-size: 8px;
+      font-weight: 500;
+      opacity: 0.80;
+    }
+
+    /* ── Subject color themes ── */
+    .c-csc510 { background: rgba(139,92,246,0.45);  color: #ede9fe; border: 1px solid rgba(167,139,250,0.40); }
+    .c-csc520 { background: rgba(236,72,153,0.38);  color: #fce7f3; border: 1px solid rgba(244,114,182,0.40); }
+    .c-mat423 { background: rgba(245,158,11,0.38);  color: #fef3c7; border: 1px solid rgba(251,191,36,0.40); }
+    .c-lcc401 { background: rgba(239,68,68,0.38);   color: #fee2e2; border: 1px solid rgba(252,165,165,0.40); }
+    .c-ict502 { background: rgba(16,185,129,0.38);  color: #d1fae5; border: 1px solid rgba(52,211,153,0.40); }
+    .c-ctu552 { background: rgba(59,130,246,0.42);  color: #dbeafe; border: 1px solid rgba(147,197,253,0.40); }
+    .c-csc583 { background: rgba(20,184,166,0.38);  color: #ccfbf1; border: 1px solid rgba(94,234,212,0.40); }
+    .c-tac401 { background: rgba(249,115,22,0.38);  color: #ffedd5; border: 1px solid rgba(253,186,116,0.40); }
+
+    /* ── Footer ── */
+    .footer-glass {
+      text-align: center;
+      margin-top: 14px;
+      font-size: 10px;
+      font-weight: 300;
+      color: rgba(255,255,255,0.26);
+      letter-spacing: 0.5px;
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="phone-wrap">
+    <!-- background glows -->
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+
+    <!-- notch -->
+    <!-- <div class="notch"></div> -->
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+
+    <!-- header -->
+    <!-- <div class="header-glass">
+      <div class="group-label">Timetable</div>
+      <div class="group-name">T5CS2303C2</div>
+      <div class="semester">Semester 20262 &middot; UiTM KT Cendering</div>
+    </div> -->
+
+    <!-- timetable -->
+    <div class="timetable-card">
+
+      <!-- time headers -->
+      <div class="grid-row time-header-row">
+        <div class="corner-cell"></div>
+        <div class="time-col-header">08:00 AM</div>
+        <div class="time-col-header">10:30 AM</div>
+        <div class="time-col-header">02:00 PM</div>
+      </div>
+
+      <!-- SUNDAY -->
+      <div class="grid-row day-row">
+        <div class="day-label">
+          <div class="day-abbr">Sun</div>
+          <div class="day-dot" style="background:#a78bfa;"></div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-csc510">
+            <div class="pill-code">CSC510</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">Virtual</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-csc520">
+            <div class="pill-code">CSC520</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">C1-1, C1-2</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-mat423">
+            <div class="pill-code">MAT423</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">A3-2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MONDAY -->
+      <div class="grid-row day-row">
+        <div class="day-label">
+          <div class="day-abbr">Mon</div>
+          <div class="day-dot" style="background:#f472b6;"></div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-lcc401">
+            <div class="pill-code">LCC401</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">MK C3</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-ict502">
+            <div class="pill-code">ICT502</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">Virtual</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-csc520">
+            <div class="pill-code">CSC520</div>
+            <div class="pill-type">Lab</div>
+            <div class="pill-room">MK B2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TUESDAY -->
+      <div class="grid-row day-row">
+        <div class="day-label">
+          <div class="day-abbr">Tue</div>
+          <div class="day-dot" style="background:#60a5fa;"></div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-ctu552">
+            <div class="pill-code">CTU552</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">C1-1, C1-2</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-csc583">
+            <div class="pill-code">CSC583</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">Bilik Sem 1</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-tac401">
+            <div class="pill-code">TAC401</div>
+            <div class="pill-type">Lecture</div>
+            <div class="pill-room">B3-5</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WEDNESDAY -->
+      <div class="grid-row day-row">
+        <div class="day-label">
+          <div class="day-abbr">Wed</div>
+          <div class="day-dot" style="background:#34d399;"></div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-ict502">
+            <div class="pill-code">ICT502</div>
+            <div class="pill-type">Lab</div>
+            <div class="pill-room">MK D3</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-mat423">
+            <div class="pill-code">MAT423</div>
+            <div class="pill-type">Tutorial</div>
+            <div class="pill-room">Big Data Lab</div>
+          </div>
+        </div>
+        <div class="cell">
+          <div class="class-pill c-csc583">
+            <div class="pill-code">CSC583</div>
+            <div class="pill-type">Lab</div>
+            <div class="pill-room">MK B4</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- THURSDAY -->
+      <div class="grid-row day-row">
+        <div class="day-label">
+          <div class="day-abbr">Thu</div>
+          <div class="day-dot" style="background:#fb923c;"></div>
+        </div>
+        <div class="cell empty"></div>
+        <div class="cell">
+          <div class="class-pill c-csc510">
+            <div class="pill-code">CSC510</div>
+            <div class="pill-type">Lab</div>
+            <div class="pill-room">MK C2</div>
+          </div>
+        </div>
+        <div class="cell empty"></div>
+      </div>
+
+    </div><!-- /timetable-card -->
+
+    <!-- <div class="footer-glass">Semester 20262 &middot; Valid 29/03/2026</div> -->
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+    <br>
+
+  </div><!-- /phone-wrap -->
+
+</body>
+</html>
