@@ -16,7 +16,10 @@
   const FILE_APP = 'timetable-maker';
   const FILE_VERSION = 2;
   const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-  const LIMITS = { slots: 12, subjects: 100, entries: 500, str: 200, maxErrors: 12 };
+  const LAYOUT_V = ['top', 'middle', 'bottom'];
+  const LAYOUT_H = ['left', 'center', 'right'];
+  const IMG_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+  const LIMITS = { image: 6000000,  slots: 12, subjects: 100, entries: 500, str: 200, maxErrors: 12 };
 
   /* ── entries ── */
   function normalizeEntry(e) {
@@ -112,7 +115,7 @@
     return out;
   }
 
-  function buildExport(state, meta) {
+  function buildExport(state, meta, image) {
     return {
       app: FILE_APP,
       version: FILE_VERSION,
@@ -122,6 +125,8 @@
         theme: state.theme,
         customGradient: state.customGradient || null,
         exportFormat: state.exportFormat,
+        layout: state.layout || undefined,
+        background: state.background ? Object.assign({}, state.background, image ? { image } : {}) : undefined,
       },
       timeSlots: state.timeSlots.slice(),
       activeDays: state.activeDays.slice(),
@@ -149,7 +154,7 @@
     }
     return {
       app: FILE_APP, version: 1, meta: data.formFields || {},
-      appearance: { theme: legacy.theme, customGradient: legacy.customGradient, exportFormat: legacy.exportFormat },
+      appearance: { theme: legacy.theme, customGradient: legacy.customGradient, exportFormat: legacy.exportFormat, layout: st.layout, background: st.background },
       timeSlots: legacy.timeSlots, activeDays: legacy.activeDays, subjects: legacy.subjects, schedule: entries,
     };
   }
@@ -163,7 +168,7 @@
     opts = opts || {};
     const errors = [];
     const err = m => { if (errors.length < LIMITS.maxErrors) errors.push(m); else if (errors.length === LIMITS.maxErrors) errors.push('…and more problems'); };
-    const fail = () => ({ ok: false, errors, state: null, meta: null });
+    const fail = () => ({ ok: false, errors, state: null, meta: null, image: null });
 
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { err('The file does not contain a timetable (expected a JSON object).'); return fail(); }
     if (raw.app !== undefined && raw.app !== FILE_APP) { err(`This file was not created by Timetable Maker (app = "${String(raw.app).slice(0, 40)}").`); return fail(); }
@@ -226,6 +231,62 @@
       else exportFormat = ap.exportFormat;
     }
 
+    let layout;
+    if (ap.layout !== undefined && ap.layout !== null) {
+      if (typeof ap.layout !== 'object' || Array.isArray(ap.layout)) err('layout must be an object.');
+      else {
+        layout = {};
+        for (const key of Object.keys(ap.layout)) {
+          const l = ap.layout[key];
+          if (opts.formatKeys && !opts.formatKeys.includes(key)) { err(`layout: unknown format "${key.slice(0, 20)}".`); continue; }
+          if (!l || typeof l !== 'object') { err(`layout for "${key}" must be an object.`); continue; }
+          const out = {};
+          if (l.v !== undefined) { if (LAYOUT_V.includes(l.v)) out.v = l.v; else err(`layout "${key}": v must be ${LAYOUT_V.join(', ')}.`); }
+          if (l.h !== undefined) { if (LAYOUT_H.includes(l.h)) out.h = l.h; else err(`layout "${key}": h must be ${LAYOUT_H.join(', ')}.`); }
+          if (l.offset !== undefined) { if (Number.isFinite(l.offset) && Math.abs(l.offset) <= 2000) out.offset = Math.round(l.offset); else err(`layout "${key}": offset must be a number between -2000 and 2000.`); }
+          if (l.width !== undefined) { if (Number.isFinite(l.width) && l.width >= 40 && l.width <= 100) out.width = Math.round(l.width); else err(`layout "${key}": width must be 40–100.`); }
+          layout[key] = out;
+        }
+      }
+    }
+
+    let background, image;
+    if (ap.background !== undefined && ap.background !== null) {
+      const b = ap.background;
+      if (typeof b !== 'object' || Array.isArray(b)) err('background must be an object.');
+      else {
+        background = {};
+        if (b.mode !== undefined) { if (b.mode === 'gradient' || b.mode === 'photo') background.mode = b.mode; else err('background mode must be "gradient" or "photo".'); }
+        [['dim', 0, 100], ['blur', 0, 40], ['frost', 0, 100]].forEach(([k, lo, hi]) => {
+          if (b[k] === undefined) return;
+          if (Number.isFinite(b[k]) && b[k] >= lo && b[k] <= hi) background[k] = b[k]; else err(`background ${k} must be ${lo}\u2013${hi}.`);
+        });
+        if (b.blobs !== undefined) { if (typeof b.blobs === 'boolean') background.blobs = b.blobs; else err('background blobs must be true or false.'); }
+        if (b.focus !== undefined) {
+          if (!b.focus || typeof b.focus !== 'object' || Array.isArray(b.focus)) err('background focus must be an object.');
+          else {
+            background.focus = {};
+            for (const key of Object.keys(b.focus)) {
+              const f = b.focus[key];
+              if (opts.formatKeys && !opts.formatKeys.includes(key)) { err(`background focus: unknown format "${key.slice(0, 20)}".`); continue; }
+              if (!f || typeof f !== 'object') { err(`background focus for "${key}" must be an object.`); continue; }
+              const o = {};
+              [['x', 0, 100], ['y', 0, 100], ['zoom', 100, 300]].forEach(([k, lo, hi]) => {
+                if (f[k] === undefined) return;
+                if (Number.isFinite(f[k]) && f[k] >= lo && f[k] <= hi) o[k] = f[k]; else err(`background focus "${key}" ${k} must be ${lo}\u2013${hi}.`);
+              });
+              background.focus[key] = o;
+            }
+          }
+        }
+        if (b.image !== undefined) {
+          if (typeof b.image !== 'string' || b.image.length > LIMITS.image || !IMG_RE.test(b.image)) err('The background image is not a valid JPEG, PNG or WebP (or is too large).');
+          else image = b.image;
+        }
+        if (background.mode === 'photo' && !image && !opts.allowMissingImage) err('The file selects a photo background but does not contain the photo.');
+      }
+    }
+
     // schedule entries
     const schedule = {};
     const list = d.schedule;
@@ -272,13 +333,143 @@
         if (!isNaN(n)) meta[k] = String(Math.max(0, Math.min(40, n)));
       });
     }
-    return { ok: true, errors, state: { theme, customGradient, exportFormat, timeSlots, activeDays, subjects, schedule }, meta };
+    return { ok: true, errors, state: Object.assign({ theme, customGradient, exportFormat, timeSlots, activeDays, subjects, schedule }, layout ? { layout } : {}, background ? { background } : {}), meta, image };
+  }
+
+
+  /* ══════════════════════════════════════
+     UiTM  (https://cdn.uitm.link/jadual/baru/{matric}.json)
+     { "2026-10-05": { hari: "Monday", jadual: [{ course_desc, courseid, groups, masa: "16:00 PM - 18:00 PM", bilik }] } }
+     One entry per calendar date; collapsed here into a weekly timetable.
+     ══════════════════════════════════════ */
+  const DAY_NAMES = {
+    sunday: 'sun', ahad: 'sun', monday: 'mon', isnin: 'mon', tuesday: 'tue', selasa: 'tue',
+    wednesday: 'wed', rabu: 'wed', thursday: 'thu', khamis: 'thu', friday: 'fri', jumaat: 'fri',
+    saturday: 'sat', sabtu: 'sat',
+  };
+
+  /** "16:00 PM" | "8:00 AM" | "14:30" -> { minutes, label:"04:00 PM" } or null */
+  function parseTimeLabel(text) {
+    const m = /(\d{1,2})[:.](\d{2})\s*(AM|PM)?/i.exec(String(text || ''));
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (h > 23 || min > 59) return null;
+    const ap = (m[3] || '').toUpperCase();
+    if (ap === 'PM' && h < 12) h += 12;             // "02:00 PM"
+    if (ap === 'AM' && h === 12) h = 0;
+    const suffix = h >= 12 ? 'PM' : 'AM';           // "16:00 PM" is really 4 PM
+    const h12 = h % 12 || 12;
+    return { minutes: h * 60 + min, label: String(h12).padStart(2, '0') + ':' + String(min).padStart(2, '0') + ' ' + suffix };
+  }
+
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const k = (n + h / 30) % 12;
+      const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return '#' + f(0) + f(8) + f(4);
+  }
+
+  /** Deterministic, well-spread subject colors: { color, textColor } */
+  function pickSubjectColors(i) {
+    const hue = (260 + i * 137.508) % 360;
+    return { color: hslToHex(hue, 65, 52), textColor: hslToHex(hue, 85, 93) };
+  }
+
+  function titleCase(text) {
+    return String(text || '').toLowerCase().replace(/[a-z][a-z']*/g, w =>
+      /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1));
+  }
+
+  /**
+   * Convert the UiTM response.  Returns { ok, errors[], warnings[], data, summary }.
+   * `data` is the v2 file shape (no appearance), ready for validateImport().
+   */
+  function convertUitm(json) {
+    const errors = [], warnings = [];
+    const fail = m => { errors.push(m); return { ok: false, errors, warnings, data: null, summary: null }; };
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return fail('The server did not return a timetable.');
+    const dates = Object.keys(json).filter(k => json[k] && typeof json[k] === 'object' && Array.isArray(json[k].jadual));
+    if (!dates.length) return fail('No classes were found for this student.');
+    dates.sort();
+
+    // 1. rows per date -> signature per weekday; keep the most common week pattern
+    const byDay = {};                                   // day -> Map(signature -> { count, rows, lastDate })
+    let skipped = 0;
+    dates.forEach(date => {
+      const dayKey = DAY_NAMES[String(json[date].hari || '').trim().toLowerCase()];
+      if (!dayKey) { warnings.push(`Skipped ${date}: unknown day "${json[date].hari}".`); return; }
+      const rows = [];
+      json[date].jadual.forEach(r => {
+        const t = r && parseTimeLabel(String(r.masa || '').split('-')[0]);
+        if (!r || !r.courseid || !t) { skipped++; return; }
+        rows.push({ courseid: String(r.courseid).trim(), desc: String(r.course_desc || '').trim(), groups: String(r.groups || '').trim(), room: String(r.bilik || '').trim(), t });
+      });
+      rows.sort((a, b) => a.t.minutes - b.t.minutes || a.courseid.localeCompare(b.courseid));
+      const sig = JSON.stringify(rows.map(r => [r.courseid, r.t.minutes, r.room]));
+      byDay[dayKey] = byDay[dayKey] || new Map();
+      const cur = byDay[dayKey].get(sig) || { count: 0, rows, lastDate: date };
+      cur.count++; cur.lastDate = date;
+      byDay[dayKey].set(sig, cur);
+    });
+    if (skipped) warnings.push(`${skipped} row(s) had no usable course or time and were skipped.`);
+
+    const chosen = {};
+    for (const day of Object.keys(byDay)) {
+      const best = [...byDay[day].values()].sort((a, b) => b.count - a.count || (a.lastDate < b.lastDate ? 1 : -1))[0];
+      if (byDay[day].size > 1) warnings.push(`${day.toUpperCase()}: classes differ between weeks — using the most common week.`);
+      chosen[day] = best.rows;
+    }
+    const activeDays = DAY_KEYS.filter(d => chosen[d] && chosen[d].length);
+    if (!activeDays.length) return fail('No classes were found for this student.');
+
+    // 2. time slots = unique start times
+    const slotMap = new Map();
+    activeDays.forEach(d => chosen[d].forEach(r => slotMap.set(r.t.minutes, r.t.label)));
+    const minutes = [...slotMap.keys()].sort((a, b) => a - b);
+    const timeSlots = minutes.map(m => slotMap.get(m));
+
+    // 3. subjects + entries
+    const subjects = [], groupCount = {}, entries = [], taken = new Set();
+    activeDays.forEach(d => chosen[d].forEach(r => {
+      if (!subjects.some(s => s.code === r.courseid)) {
+        subjects.push(Object.assign({ code: r.courseid, fullName: titleCase(r.desc) }, pickSubjectColors(subjects.length)));
+      }
+      groupCount[r.groups] = (groupCount[r.groups] || 0) + 1;
+      const slotIndex = minutes.indexOf(r.t.minutes);
+      const id = d + ':' + slotIndex;
+      if (taken.has(id)) { warnings.push(`${r.courseid} clashes with another class on ${d.toUpperCase()} at ${r.t.label} — skipped.`); return; }
+      taken.add(id);
+      entries.push({ day: d, slotIndex, span: 1, subject: r.courseid, type: 'Lecture', room: r.room, lecturer: '' });
+    }));
+    const groupName = Object.entries(groupCount).filter(e => e[0]).sort((a, b) => b[1] - a[1])[0];
+
+    return {
+      ok: true, errors, warnings,
+      data: {
+        app: FILE_APP, version: FILE_VERSION,
+        meta: groupName ? { groupName: groupName[0] } : {},
+        timeSlots, activeDays, subjects, schedule: entries,
+      },
+      summary: { dates: dates.length, firstDate: dates[0], lastDate: dates[dates.length - 1], classes: entries.length, groupName: groupName ? groupName[0] : '' },
+    };
+  }
+
+  /** Default block position per export format. Phones/tablet start below the lock-screen clock area. */
+  function defaultLayout(formatKey) {
+    const tall = formatKey === 'iphone' || formatKey === 'ipad';
+    return { v: 'top', offset: tall ? 280 : 0, h: 'center', width: 100 };
   }
 
   const api = {
     DAY_KEYS, FILE_APP, FILE_VERSION,
     normalizeEntry, normalizeSchedule, getOccupant, canPlace, maxSpan, removeSlotFromDay,
     entriesFromState, buildExport, migrateToV2, validateImport,
+    convertUitm, parseTimeLabel, pickSubjectColors, defaultLayout, LAYOUT_V, LAYOUT_H,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else Object.assign(root, api);

@@ -84,7 +84,7 @@ let state = {
 /* ══════════════════════════════════════
    PERSISTENCE
    ══════════════════════════════════════ */
-const FORM_FIELDS = ['groupName', 'semester', 'showHeader', 'showFooter', 'footerText', 'spacerTop', 'spacerBottom'];
+const FORM_FIELDS = ['groupName', 'semester', 'showHeader', 'showFooter', 'footerText'];
 let storageWarned = false;
 
 function storageSet(key, value) {
@@ -122,7 +122,7 @@ function loadState() {
   if (s) {
     let parsed = null;
     try { parsed = JSON.parse(s); } catch (e) { /* handled below */ }
-    const res = parsed ? validateImport(parsed, VALIDATE_OPTS) : null;
+    const res = parsed ? validateImport(parsed, { ...VALIDATE_OPTS, allowMissingImage: true }) : null;
     if (res && res.ok) {
       state = { ...state, ...res.state };
     } else {
@@ -132,6 +132,20 @@ function loadState() {
     }
   }
   normalizeSchedule(state);
+  if (!state.layout) {
+    // older versions positioned the block with a "top spacing" slider
+    try {
+      const form = JSON.parse(storageGet('tt-maker-form') || 'null');
+      if (form && form.spacerTop !== undefined) state.layout = layoutFromSpacer(form.spacerTop);
+    } catch (e) { /* ignore */ }
+  }
+}
+
+function layoutFromSpacer(spacerTop) {
+  const n = parseInt(spacerTop, 10);
+  if (isNaN(n)) return undefined;
+  const offset = Math.max(0, Math.min(2000, n * 18));       // one spacer line was about 18px
+  return { iphone: { offset }, ipad: { offset } };
 }
 
 function readFormFields() {
@@ -155,10 +169,6 @@ function applyFormFields(data) {
     if (el.type === 'checkbox') el.checked = !!data[k];
     else el.value = data[k];
   });
-  const st = document.getElementById('spacerTop');
-  const sb = document.getElementById('spacerBottom');
-  if (st) document.getElementById('spacerTopVal').textContent = st.value;
-  if (sb) document.getElementById('spacerBottomVal').textContent = sb.value;
 }
 
 function loadFormFields() {
@@ -170,14 +180,57 @@ function loadFormFields() {
 /* ══════════════════════════════════════
    TABS
    ══════════════════════════════════════ */
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+function showTab(name, opts) {
+  document.querySelectorAll('.tab').forEach(t => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
   });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  if (!(opts && opts.noScroll)) {
+    const tabs = document.querySelector('.tabs');
+    if (tabs) tabs.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => showTab(tab.dataset.tab, { noScroll: true }));
 });
+
+/* ══════════════════════════════════════
+   WELCOME, HELP & COLOUR MODE
+   ══════════════════════════════════════ */
+function initWelcome() {
+  const w = document.getElementById('welcome');
+  if (w) w.hidden = storageGet('tt-maker-welcome') === 'done';
+}
+
+function dismissWelcome() {
+  storageSet('tt-maker-welcome', 'done');
+  document.getElementById('welcome').hidden = true;
+}
+
+function showWelcomeAgain() {
+  storageSet('tt-maker-welcome', '');
+  closeHelp();
+  document.getElementById('welcome').hidden = false;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function startUitm() {
+  showTab('classes');
+  const input = document.getElementById('uitmMatric');
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  input.focus({ preventScroll: true });
+}
+
+function openHelp() { document.getElementById('helpModal').classList.add('open'); }
+function closeHelp() { document.getElementById('helpModal').classList.remove('open'); }
+
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  storageSet('tt-maker-theme', next);
+}
 
 /* ══════════════════════════════════════
    THEMES
@@ -245,6 +298,8 @@ function selectFormat(key) {
   state.exportFormat = key;
   saveState();
   renderFormatSelector();
+  renderPositionPanel();
+  renderBackgroundPanel();
   render();
 }
 
@@ -354,6 +409,10 @@ let editingSubjectIdx = -1;
 function renderSubjects() {
   const c = document.getElementById('subjectsList');
   document.getElementById('subjectCount').textContent = state.subjects.length;
+  if (!state.subjects.length) {
+    c.innerHTML = `<div class="empty-state"><b>No subjects yet</b>Add your first subject below, or import your timetable if you&rsquo;re a UiTM student.</div>`;
+    return;
+  }
   c.innerHTML = state.subjects.map((s, i) => `
     <div class="subject-item">
       <div class="swatch" style="background:${s.color};"></div>
@@ -472,7 +531,7 @@ function renderClassPalette() {
   state.activeDays.forEach(d => (state.schedule[d] || []).forEach(e => { if (e) counts[e.subject] = (counts[e.subject] || 0) + 1; }));
   c.innerHTML = state.subjects.map((s, i) => `
     <div class="palette-chip" data-drag-subject="${i}" title="Drag onto the grid"
-         style="background:${hexToRgba(s.color, 0.3)};color:${s.textColor};border-color:${hexToRgba(s.color, 0.55)};">
+         style="background:${tint(s.color, 0.3)};color:${s.textColor};border-color:${hexToRgba(s.color, 0.55)};">
       <span class="pc-grip">⠿</span>
       <span class="pc-code">${esc(s.code)}</span>
       <span class="pc-count">${counts[s.code] || 0}×</span>
@@ -505,7 +564,7 @@ function renderScheduleEditor() {
         const { bg, tc } = subjectStyle(slot.subject);
         html += `<div class="sched-cell has-class" data-day="${dayKey}" data-slot="${si}" data-span="${span}"
             style="grid-column:span ${span};" onclick="openSlotModal('${dayKey}',${si})">
-          <div class="slot-card" data-drag-entry style="background:${hexToRgba(bg, 0.35)};color:${tc};border:1px solid ${hexToRgba(bg, 0.4)};">
+          <div class="slot-card" data-drag-entry style="background:${tint(bg, 0.35)};color:${tc};border:1px solid ${hexToRgba(bg, 0.4)};">
             <div class="sc-code">${esc(slot.subject)}</div>
             <div class="sc-meta">${esc(slot.type)}${slot.room ? ' &middot; ' + esc(slot.room) : ''}</div>
             ${slot.lecturer ? `<div class="sc-meta">${esc(slot.lecturer)}</div>` : ''}
@@ -825,6 +884,9 @@ function initDrag() {
    ══════════════════════════════════════ */
 function renderStats() {
   const c = document.getElementById('statsContainer');
+  const anyClass = state.activeDays.some(d => (state.schedule[d] || []).some(Boolean));
+  const ge = document.getElementById('gridEmpty');
+  if (ge) ge.hidden = anyClass;
   let totalClasses = 0;
   let busyDays = 0;
   const subjectCounts = {};
@@ -885,25 +947,28 @@ function render() {
   const showHeader = document.getElementById('showHeader').checked;
   const showFooter = document.getElementById('showFooter').checked;
   const footerText = document.getElementById('footerText').value;
-  const spacerTop = parseInt(document.getElementById('spacerTop').value) || 0;
-  const spacerBottom = parseInt(document.getElementById('spacerBottom').value) || 0;
   const fmt = getFormat();
+  const lay = getLayout(fmt.key);
+  const flex = { top: 'flex-start', left: 'flex-start', middle: 'center', center: 'center', bottom: 'flex-end', right: 'flex-end' };
   const isDesktop = fmt.fixed;
   const cols = state.timeSlots.length;
   const dayCol = isDesktop ? '72px' : '52px';
   const gridCols = `${dayCol} ${'1fr '.repeat(cols).trim()}`;
-  const gradient = getGradientCSS();
+  const gradient = getBackgroundCSS(fmt);
+  const photo = photoActive();
+  const bgc = getBg();
+  const frost = (0.07 + bgc.frost / 100 * 0.6).toFixed(3);
   const sizeStyle = fmt.fixed
     ? `width:${fmt.w}px;height:${fmt.h}px;`
     : `width:${fmt.w}px;min-height:${fmt.h}px;`;
   const fmtClass = isDesktop ? 'format-desktop' : (fmt.key === 'ipad' ? 'format-ipad' : '');
 
   let html = `
-    <div class="phone-wrap ${fmtClass}" id="exportTarget" style="${sizeStyle}border-radius:${fmt.radius}px;background:${gradient};">
+    <div class="phone-wrap ${fmtClass}${photo ? ' has-bg' : ''}${photo && !bgc.blobs ? ' no-blobs' : ''}" id="exportTarget" style="${photo ? `--frost:${frost};` : ''}${sizeStyle}border-radius:${fmt.radius}px;background:${gradient};justify-content:${flex[lay.v]};align-items:${flex[lay.h]};">
       <div class="blob blob-1"></div>
       <div class="blob blob-2"></div>
       <div class="blob blob-3"></div>
-      ${isDesktop ? '' : `<div class="phone-spacer">${'<br>'.repeat(spacerTop)}</div>`}
+      <div class="content-stack" style="width:${lay.width}%;top:${lay.offset}px;">
   `;
 
   if (showHeader) {
@@ -959,11 +1024,372 @@ function render() {
     html += `<div class="footer-glass">${esc(footerText)}</div>`;
   }
 
-  if (!isDesktop) html += `<div class="phone-spacer">${'<br>'.repeat(spacerBottom)}</div>`;
-  html += `</div>`;
+  html += `</div></div>`;                                // .content-stack, .phone-wrap
 
   document.getElementById('phonePreview').innerHTML = html;
   updatePreviewScale();
+  updateGuides();
+  checkLayoutFit();
+}
+
+/* ══════════════════════════════════════
+   POSITION  (where the timetable sits on the exported image)
+   state.layout[formatKey] = { v, offset, h, width } — stored per format
+   ══════════════════════════════════════ */
+function getLayout(key) {
+  return { ...defaultLayout(key), ...((state.layout || {})[key] || {}) };
+}
+
+let guidesOn = storageGet('tt-maker-guides') === '1';
+
+function setLayout(patch, rerenderPanel = true) {
+  const key = state.exportFormat;
+  state.layout = { ...(state.layout || {}), [key]: { ...getLayout(key), ...patch } };
+  saveState();
+  if (rerenderPanel) renderPositionPanel();
+  render();
+}
+
+function resetLayout() {
+  if (state.layout) delete state.layout[state.exportFormat];
+  saveState();
+  renderPositionPanel();
+  render();
+}
+
+function setGuides(on) {
+  guidesOn = on;
+  storageSet('tt-maker-guides', on ? '1' : '0');
+  updateGuides();
+}
+
+function isPhoneFormat() {
+  return state.exportFormat === 'iphone' || state.exportFormat === 'ipad';
+}
+
+function updateGuides() {
+  const g = document.getElementById('guideOverlay');
+  if (g) g.classList.toggle('show', guidesOn && isPhoneFormat());
+}
+
+function checkLayoutFit() {
+  const warn = document.getElementById('layoutWarn');
+  const wrap = document.getElementById('exportTarget');
+  const stack = wrap && wrap.querySelector('.content-stack');
+  if (!warn || !stack) return;
+  const top = stack.offsetTop, bottom = top + stack.offsetHeight;
+  const out = top < 0 || bottom > wrap.offsetHeight;
+  warn.textContent = out ? 'Part of the timetable is outside the image \u2014 move it back or reduce the offset.' : '';
+}
+
+function renderPositionPanel() {
+  const c = document.getElementById('positionPanel');
+  if (!c) return;
+  const fmt = getFormat();
+  const lay = getLayout(fmt.key);
+  const half = Math.round(fmt.h / 2);
+  const phone = isPhoneFormat();
+  const clockOffset = defaultLayout(fmt.key).offset;
+
+  const seg = (items, active) => items.map(([label, patch, on]) =>
+    `<button class="seg-btn ${on ? 'active' : ''}" onclick='setLayout(${JSON.stringify(patch)})'>${label}</button>`).join('');
+  const vItems = [['Top', { v: 'top', offset: 0 }, lay.v === 'top' && lay.offset === 0 && !(phone && clockOffset === 0)]];
+  if (phone) vItems.push(['Below clock', { v: 'top', offset: clockOffset }, lay.v === 'top' && lay.offset === clockOffset]);
+  vItems.push(['Middle', { v: 'middle', offset: 0 }, lay.v === 'middle' && lay.offset === 0]);
+  vItems.push(['Bottom', { v: 'bottom', offset: 0 }, lay.v === 'bottom' && lay.offset === 0]);
+  const hItems = [['Left', { h: 'left' }, lay.h === 'left'], ['Center', { h: 'center' }, lay.h === 'center'], ['Right', { h: 'right' }, lay.h === 'right']];
+
+  c.innerHTML = `
+    <div class="panel-title">Position <span class="subject-count">${esc(fmt.name)}</span></div>
+    <p class="panel-hint">Where the timetable sits on the image. Saved separately for each format.</p>
+    <div class="ctl-label">Vertical</div>
+    <div class="seg">${seg(vItems)}</div>
+    <div class="ctl-label">Fine-tune <strong>${lay.offset > 0 ? '+' : ''}${lay.offset}px</strong></div>
+    <input type="range" min="${-half}" max="${half}" step="2" value="${Math.max(-half, Math.min(half, lay.offset))}"
+      oninput="this.previousElementSibling.lastElementChild.textContent=(this.value>0?'+':'')+this.value+'px'; setLayout({offset:+this.value}, false)" />
+    <div class="ctl-label">Horizontal</div>
+    <div class="seg">${seg(hItems)}</div>
+    <div class="ctl-label">Width <strong>${lay.width}%</strong></div>
+    <input type="range" min="60" max="100" step="1" value="${lay.width}"
+      oninput="this.previousElementSibling.lastElementChild.textContent=this.value+'%'; setLayout({width:+this.value}, false)" />
+    <div class="btn-row" style="margin-top:12px; align-items:center;">
+      ${phone ? `<label class="check-inline"><input type="checkbox" ${guidesOn ? 'checked' : ''} onchange="setGuides(this.checked)" /> Show lock-screen guides</label>` : ''}
+      <button class="btn btn-secondary" style="margin-left:auto;padding:6px 12px;font-size:11px;" onclick="resetLayout()">Reset position</button>
+    </div>
+    <div class="layout-warn" id="layoutWarn"></div>`;
+}
+
+/* ══════════════════════════════════════
+   BACKGROUND PHOTO
+   state.background = { mode, dim, blur, frost, blobs, focus: { [format]: { x, y, zoom } } }
+   The photo itself is NOT in `state` (render() saves state on every edit): it lives in its own
+   localStorage key, and is shown through a blob: URL so render() never re-emits megabytes of text.
+   Blur is baked with a canvas because html2canvas ignores CSS filters.
+   ══════════════════════════════════════ */
+const BG_KEY = 'tt-maker-bg';
+const BG_MAX_INPUT = 25 * 1024 * 1024;
+const BG_MAX_SIDE = 3000;
+const BG_MAX_CHARS = 1800000;
+const DEFAULT_BG = { mode: 'gradient', dim: 25, blur: 0, frost: 18, blobs: false };
+
+let bgDataUrl = null;      // JPEG/PNG/WebP data URL (storage + saved file)
+let bgDims = null;         // { w, h } of the stored photo
+let bgBlobUrl = null;      // what the preview/export actually draws (blurred when blur > 0)
+let bgBlobFor = null;      // cache key of the current blob
+let bgPlainBlob = null;
+let bgBlurTimer = null;
+let bgInfo = '';
+let bgUnsaved = false;     // true when the photo could not be written to localStorage
+
+function getBg() { return { ...DEFAULT_BG, ...(state.background || {}) }; }
+function getBgFocus(key) { return { x: 50, y: 50, zoom: 100, ...(((state.background || {}).focus || {})[key] || {}) }; }
+function photoActive() { return getBg().mode === 'photo' && !!bgBlobUrl && !!bgDims; }
+
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('decode'));
+    img.src = src;
+  });
+}
+
+async function decodeFile(file) {
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file); } catch (e) { /* fall back below */ }
+  }
+  const url = URL.createObjectURL(file);
+  try { return await loadImageEl(url); } finally { URL.revokeObjectURL(url); }
+}
+
+function canvasToBlob(canvas, type, q) {
+  return new Promise(res => canvas.toBlob(res, type, q));
+}
+
+/** Downscale to BG_MAX_SIDE and re-encode as JPEG, shrinking until it fits BG_MAX_CHARS. */
+function encodePhoto(source, w, h) {
+  let scale = Math.min(1, BG_MAX_SIDE / Math.max(w, h));
+  for (let pass = 0; pass < 6; pass++) {
+    const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+    const c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#101020';                       // transparent PNGs become dark, not black-hole JPEG
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(source, 0, 0, cw, ch);
+    for (const q of [0.88, 0.8, 0.7, 0.6]) {
+      const url = c.toDataURL('image/jpeg', q);
+      if (url.length <= BG_MAX_CHARS) return { url, w: cw, h: ch };
+    }
+    scale *= 0.8;
+  }
+  return null;
+}
+
+async function setBackgroundFile(file) {
+  if (!file) return;
+  if (file.size > BG_MAX_INPUT) { showToast('That photo is over 25 MB — try a smaller one.'); return; }
+  if (file.type && !/^image\/(jpeg|png|webp|gif|bmp|avif)$/.test(file.type)) {
+    showToast(/heic|heif/.test(file.type) ? 'HEIC photos are not supported here — export it as JPG or PNG first.' : 'Please choose a JPG, PNG or WebP image.');
+    return;
+  }
+  showToast('Preparing your photo…');
+  let bmp;
+  try { bmp = await decodeFile(file); } catch (e) {
+    showToast('Could not read that image. Try a JPG or PNG (HEIC is not supported).');
+    return;
+  }
+  const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight;
+  const enc = encodePhoto(bmp, w, h);
+  if (bmp.close) bmp.close();
+  if (!enc) { showToast('That photo could not be shrunk enough. Try a smaller one.'); return; }
+  const ok = await adoptBackgroundImage(enc.url);
+  if (!ok) return;
+  state.background = { ...getBg(), mode: 'photo' };
+  saveState();
+  renderBackgroundPanel();
+  render();
+  showToast(bgUnsaved ? 'Photo added, but it is too big to keep between visits — it lasts until you close this tab.' : 'Photo added ✓ Adjust it below');
+}
+
+/** Make `dataUrl` the current photo (stores it, builds the display blob). Returns false on failure. */
+async function adoptBackgroundImage(dataUrl) {
+  let img;
+  try { img = await loadImageEl(dataUrl); } catch (e) { showToast('The background photo could not be read.'); return false; }
+  bgDataUrl = dataUrl;
+  bgDims = { w: img.naturalWidth, h: img.naturalHeight };
+  bgInfo = `${bgDims.w}×${bgDims.h} · ${(dataUrl.length * 0.75 / 1048576).toFixed(1)} MB`;
+  bgPlainBlob = null; bgBlobFor = null;
+  bgUnsaved = false;
+  try { localStorage.setItem(BG_KEY, dataUrl); }
+  catch (e) { bgUnsaved = true; }
+  await rebuildBgBlob(img);
+  return true;
+}
+
+async function rebuildBgBlob(imgEl) {
+  if (!bgDataUrl) return;
+  const blur = getBg().blur;
+  const key = String(blur);
+  if (bgBlobFor === key && bgBlobUrl) return;
+  const img = imgEl || await loadImageEl(bgDataUrl);
+  let blob;
+  if (blur <= 0) {
+    if (!bgPlainBlob) bgPlainBlob = await (await fetch(bgDataUrl)).blob();
+    blob = bgPlainBlob;
+  } else {
+    blob = await blurredBlob(img, blur);
+  }
+  if (bgBlobUrl) URL.revokeObjectURL(bgBlobUrl);
+  bgBlobUrl = URL.createObjectURL(blob);
+  bgBlobFor = key;
+}
+
+/** Blur on a <=1200px working copy (detail is gone anyway); CSS scales it back up. */
+async function blurredBlob(img, blur) {
+  const scale = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  const px = blur * (Math.max(w, h) / 600);            // slider 0-40 -> a few percent of the image size
+  const m = Math.ceil(px * 2);                          // over-draw so blurred edges are not transparent
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.filter = `blur(${px}px)`;
+  if (ctx.filter === `blur(${px}px)`) {
+    ctx.drawImage(img, -m, -m, w + 2 * m, h + 2 * m);
+  } else {
+    // no ctx.filter (older Safari): shrink then enlarge with smoothing
+    ctx.filter = 'none';
+    const f = Math.max(2, 1 + px / 2);
+    const s = document.createElement('canvas');
+    s.width = Math.max(2, Math.round(w / f)); s.height = Math.max(2, Math.round(h / f));
+    const sc = s.getContext('2d');
+    sc.imageSmoothingQuality = 'high';
+    sc.drawImage(img, 0, 0, s.width, s.height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(s, 0, 0, w, h);
+  }
+  return canvasToBlob(c, 'image/jpeg', 0.9);
+}
+
+function loadBackgroundImage() {
+  let url = null;
+  try { url = localStorage.getItem(BG_KEY); } catch (e) { /* ignore */ }
+  if (!url) {
+    if (getBg().mode === 'photo') state.background = { ...getBg(), mode: 'gradient' };
+    return Promise.resolve();
+  }
+  return adoptBackgroundImage(url).then(ok => { if (ok) { renderBackgroundPanel(); render(); } });
+}
+
+function removeBackground() {
+  try { localStorage.removeItem(BG_KEY); } catch (e) { /* ignore */ }
+  if (bgBlobUrl) URL.revokeObjectURL(bgBlobUrl);
+  bgDataUrl = bgDims = bgBlobUrl = bgBlobFor = bgPlainBlob = null;
+  state.background = { ...getBg(), mode: 'gradient' };
+  saveState();
+  renderBackgroundPanel();
+  render();
+  showToast('Photo removed');
+}
+
+function setBackground(patch, rerenderPanel = true) {
+  const key = state.exportFormat;
+  if (patch.focus) {
+    const focus = { ...(getBg().focus || {}), [key]: { ...getBgFocus(key), ...patch.focus } };
+    state.background = { ...getBg(), ...patch, focus };
+  } else {
+    state.background = { ...getBg(), ...patch };
+  }
+  saveState();
+  if (patch.blur !== undefined) {
+    clearTimeout(bgBlurTimer);
+    bgBlurTimer = setTimeout(() => rebuildBgBlob().then(render), 140);
+  }
+  if (rerenderPanel) renderBackgroundPanel();
+  render();
+}
+
+function chooseBackgroundMode(mode) {
+  if (mode === 'photo' && !bgDataUrl) { pickBackgroundFile(); return; }
+  setBackground({ mode });
+}
+
+function pickBackgroundFile() { document.getElementById('bgFile').click(); }
+function onBackgroundFile(ev) {
+  const f = ev.target.files[0];
+  ev.target.value = '';
+  if (f) setBackgroundFile(f);
+}
+
+/** CSS `background` value for the export target */
+function getBackgroundCSS(fmt) {
+  const gradient = getGradientCSS();
+  if (!photoActive()) return gradient;
+  const cfg = getBg(), f = getBgFocus(fmt.key);
+  const ratio = bgDims.w / bgDims.h;
+  const z = f.zoom / 100;
+  let sw, sh;
+  if (fmt.w / fmt.h > ratio) { sw = fmt.w * z; sh = sw / ratio; } else { sh = fmt.h * z; sw = sh * ratio; }
+  const d = (cfg.dim / 100 * 0.85).toFixed(3);
+  return `linear-gradient(rgba(0,0,0,${d}),rgba(0,0,0,${d})), url(${bgBlobUrl}) ${f.x}% ${f.y}% / ${sw.toFixed(1)}px ${sh.toFixed(1)}px no-repeat, ${gradient}`;
+}
+
+function renderBackgroundPanel() {
+  const c = document.getElementById('backgroundPanel');
+  if (!c) return;
+  const cfg = getBg();
+  const fmt = getFormat();
+  const f = getBgFocus(fmt.key);
+  const photo = cfg.mode === 'photo' && !!bgDataUrl;
+  const gp = document.getElementById('gradientPanel');
+  if (gp) gp.hidden = photo;
+
+  const slider = (label, key, min, max, val, unit, onInput) => `
+    <div class="ctl-label">${label} <strong>${val}${unit}</strong></div>
+    <input type="range" min="${min}" max="${max}" step="1" value="${val}"
+      oninput="this.previousElementSibling.lastElementChild.textContent=this.value+'${unit}'; ${onInput}" />`;
+
+  let body = '';
+  if (!bgDataUrl) {
+    body = `<button class="upload-zone" onclick="pickBackgroundFile()">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>
+        <b>Upload your own photo</b>
+        <span>Click, or drop an image anywhere on this page. JPG, PNG or WebP. It stays on your device.</span>
+      </button>`;
+  } else if (photo) {
+    body = `
+      <div class="photo-row">
+        <img class="photo-thumb" src="${bgBlobUrl || ''}" alt="Your background photo" />
+        <div class="photo-meta"><b>Your photo</b><span>${esc(bgInfo)}</span>
+          <div class="btn-row" style="margin-top:8px;">
+            <button class="btn btn-secondary" style="padding:6px 12px;font-size:11px;" onclick="pickBackgroundFile()">Replace</button>
+            <button class="btn btn-danger" style="padding:6px 12px;font-size:11px;" onclick="removeBackground()">Remove</button>
+          </div></div>
+      </div>
+      <div class="ctl-label sub-h">Framing <span class="subject-count">${esc(fmt.name)}</span></div>
+      ${slider('Move left / right', 'x', 0, 100, f.x, '%', "setBackground({focus:{x:+this.value}}, false)")}
+      ${slider('Move up / down', 'y', 0, 100, f.y, '%', "setBackground({focus:{y:+this.value}}, false)")}
+      ${slider('Zoom', 'zoom', 100, 300, f.zoom, '%', "setBackground({focus:{zoom:+this.value}}, false)")}
+      <div class="ctl-label sub-h">Make it readable</div>
+      ${slider('Darken', 'dim', 0, 100, cfg.dim, '%', "setBackground({dim:+this.value}, false)")}
+      ${slider('Blur', 'blur', 0, 40, cfg.blur, '', "setBackground({blur:+this.value}, false)")}
+      ${slider('Card frost', 'frost', 0, 100, cfg.frost, '%', "setBackground({frost:+this.value}, false)")}
+      <label class="check-inline" style="margin-top:12px;"><input type="checkbox" ${cfg.blobs ? 'checked' : ''} onchange="setBackground({blobs:this.checked}, false)" /> Keep the soft colored glow</label>
+      <p class="panel-hint" style="margin:10px 0 0;">Tip: for bright or busy photos, raise <em>Darken</em> or <em>Card frost</em> so the text stays easy to read. Framing is saved separately for each device size.</p>`;
+  } else {
+    body = `<p class="panel-hint">You have a photo saved (${esc(bgInfo)}). Switch to <em>Photo</em> to use it, or <button class="link-btn" onclick="removeBackground()">remove it</button>.</p>`;
+  }
+
+  c.innerHTML = `
+    <div class="panel-title">Background</div>
+    <p class="panel-hint">Choose a soft gradient, or make it yours with a photo.</p>
+    <div class="seg">
+      <button class="seg-btn ${photo ? '' : 'active'}" onclick="chooseBackgroundMode('gradient')">Gradient</button>
+      <button class="seg-btn ${photo ? 'active' : ''}" onclick="chooseBackgroundMode('photo')">Photo</button>
+    </div>
+    <div style="margin-top:14px;">${body}</div>
+    <input type="file" id="bgFile" accept="image/*" style="display:none" onchange="onBackgroundFile(event)" />`;
 }
 
 /* ══════════════════════════════════════
@@ -980,13 +1406,20 @@ async function exportPNG() {
       backgroundColor: null,
       useCORS: true,
       logging: false,
+      // the live preview is scaled down to fit; capture the target at its true size
+      onclone: doc => {
+        const pp = doc.getElementById('phonePreview');
+        const sc = doc.getElementById('previewScaler');
+        if (pp) { pp.style.transform = 'none'; pp.style.transition = 'none'; }
+        if (sc) { sc.style.width = 'auto'; sc.style.height = 'auto'; sc.style.overflow = 'visible'; }
+      },
     });
     const link = document.createElement('a');
     const name = document.getElementById('groupName').value || 'timetable';
     link.download = `${name}_${fmt.key}_timetable.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
-    showToast('PNG exported successfully!');
+    showToast('Wallpaper downloaded \u2713');
   } catch (e) {
     showToast('Export failed: ' + e.message);
   }
@@ -998,7 +1431,7 @@ async function exportPNG() {
 let pendingImport = null;
 
 function exportJSON() {
-  const data = buildExport(state, readFormFields());
+  const data = buildExport(state, readFormFields(), bgDataUrl);
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const name = (data.meta.groupName || 'timetable').replace(/[^\w.-]+/g, '_');
   const link = document.createElement('a');
@@ -1008,7 +1441,7 @@ function exportJSON() {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  showToast(`Schedule saved (${data.schedule.length} classes)`);
+  showToast(`Saved \u2713 ${data.schedule.length} class${data.schedule.length === 1 ? '' : 'es'} in your file`);
 }
 
 function pickImportFile() {
@@ -1022,8 +1455,8 @@ function importJSON(event) {
 }
 
 function readImportFile(file) {
-  if (file.size > 2 * 1024 * 1024) {
-    showImportError(['The file is larger than 2 MB — that is not a timetable file.']);
+  if (file.size > 10 * 1024 * 1024) {
+    showImportError(['The file is larger than 10 MB — that is not a timetable file.']);
     return;
   }
   const reader = new FileReader();
@@ -1067,23 +1500,87 @@ function showImportError(errors) {
 function showImportConfirm(res, fileName) {
   const count = res.state.activeDays.reduce((n, d) => n + res.state.schedule[d].filter(Boolean).length, 0);
   const name = res.meta.groupName ? ` for <b>${esc(res.meta.groupName)}</b>` : '';
-  openImportModal('Load this schedule?',
+  const sum = res.summary
+    ? ` Based on ${res.summary.dates} dates (${esc(res.summary.firstDate)} to ${esc(res.summary.lastDate)}), shown as a weekly timetable.` : '';
+  const warn = res.warnings && res.warnings.length
+    ? `<ul class="import-errors warn">${res.warnings.map(m => `<li>${esc(m)}</li>`).join('')}</ul>` : '';
+  openImportModal(res.keepDesign ? 'Use this timetable?' : 'Load this schedule?',
     `<p class="import-note">${esc(fileName)}${name}: ${count} class${count === 1 ? '' : 'es'},
-     ${res.state.subjects.length} subjects, ${res.state.activeDays.length} days, ${res.state.timeSlots.length} time slots.</p>
-     <p class="import-note">This replaces your current timetable.</p>`, true);
+     ${res.state.subjects.length} subjects, ${res.state.activeDays.length} days, ${res.state.timeSlots.length} time slots.${sum}</p>
+     ${warn}
+     <p class="import-note">${res.keepDesign
+       ? 'This replaces your classes, subjects and time slots. Your theme, layout and header/footer are kept.'
+       : 'This replaces your current timetable.'}</p>`, true);
 }
 
 function applyImport() {
   if (!pendingImport) return;
   const res = pendingImport;
-  state = { ...state, ...res.state };
+  if (res.keepDesign) {
+    const { timeSlots, activeDays, subjects, schedule } = res.state;
+    state = { ...state, timeSlots, activeDays, subjects, schedule };
+    if (res.meta.groupName) applyFormFields({ groupName: res.meta.groupName });
+  } else {
+    state = { ...state, ...res.state, layout: res.state.layout || layoutFromSpacer(res.meta.spacerTop) };
+    applyFormFields(res.meta);
+    syncGradientPickers();
+  }
   normalizeSchedule(state);
-  applyFormFields(res.meta);
-  syncGradientPickers();
   closeImportModal();
   saveState();
   fullRender();
-  showToast('Schedule loaded!');
+  if (!res.keepDesign && res.image) adoptBackgroundImage(res.image).then(() => { renderBackgroundPanel(); render(); });
+  showToast(res.keepDesign ? 'All set \u2014 your timetable is in! Next: check the Schedule tab.' : 'Timetable loaded \u2713');
+}
+
+/* ══════════════════════════════════════
+   UiTM STUDENT IMPORT
+   ══════════════════════════════════════ */
+const UITM_URL = 'https://cdn.uitm.link/jadual/baru/';
+
+function setUitmStatus(msg, kind) {
+  const el = document.getElementById('uitmStatus');
+  el.textContent = msg;
+  el.className = 'uitm-status' + (kind ? ' ' + kind : '');
+}
+
+async function importFromUitm() {
+  const input = document.getElementById('uitmMatric');
+  const btn = document.getElementById('uitmBtn');
+  const id = input.value.trim();
+  if (!/^[A-Za-z0-9]{6,15}$/.test(id)) {
+    setUitmStatus('Enter your student ID (6\u201315 letters or digits).', 'error');
+    input.focus();
+    return;
+  }
+  storageSet('tt-maker-matric', id);
+  btn.disabled = true;
+  setUitmStatus('Fetching timetable\u2026', '');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const resp = await fetch(UITM_URL + encodeURIComponent(id) + '.json', { signal: ctrl.signal, cache: 'no-store' });
+    if (resp.status === 404) throw new Error(`No timetable found for "${id}". Check the student ID.`);
+    if (!resp.ok) throw new Error(`The server returned an error (${resp.status}). Try again later.`);
+    let json;
+    try { json = await resp.json(); } catch (e) { throw new Error('The server sent something that is not a timetable. Check the student ID.'); }
+
+    const conv = convertUitm(json);
+    if (!conv.ok) throw new Error(conv.errors[0]);
+    const v = validateImport(conv.data, VALIDATE_OPTS);
+    if (!v.ok) { setUitmStatus('', ''); showImportError(v.errors); return; }
+    pendingImport = { ...v, keepDesign: true, warnings: conv.warnings, summary: conv.summary };
+    setUitmStatus('', '');
+    showImportConfirm(pendingImport, `UiTM ${id}`);
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'The request timed out. Check your connection and try again.'
+      : e instanceof TypeError ? 'Could not reach cdn.uitm.link. Check your internet connection.'
+      : e.message;
+    setUitmStatus(msg, 'error');
+  } finally {
+    clearTimeout(timer);
+    btn.disabled = false;
+  }
 }
 
 function syncGradientPickers() {
@@ -1108,7 +1605,8 @@ function initFileDrop() {
     depth = 0;
     overlay.classList.remove('show');
     const f = e.dataTransfer.files[0];
-    if (f) readImportFile(f);
+    if (!f) return;
+    if (/^image\//.test(f.type)) { showTab('style', { noScroll: true }); setBackgroundFile(f); } else readImportFile(f);
   });
 }
 
@@ -1117,6 +1615,7 @@ function resetAll() {
   try {
     localStorage.removeItem('tt-maker-state');
     localStorage.removeItem('tt-maker-form');
+    localStorage.removeItem(BG_KEY);
   } catch (e) { /* ignore */ }
   location.reload();
 }
@@ -1124,6 +1623,12 @@ function resetAll() {
 /* ══════════════════════════════════════
    UTILITIES
    ══════════════════════════════════════ */
+/** Translucent colour tint over a theme-dependent backing (transparent in dark mode, deep indigo in light) */
+function tint(hex, alpha) {
+  const c = hexToRgba(hex, alpha);
+  return `linear-gradient(${c}, ${c}), var(--card-under)`;
+}
+
 function hexToRgba(hex, alpha) {
   hex = hex.replace('#', '');
   if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
@@ -1173,6 +1678,7 @@ document.addEventListener('keydown', e => {
     closeSubjectModal();
     closeSlotModal();
     closeImportModal();
+    closeHelp();
   }
   // Ctrl+E to export
   if (e.ctrlKey && e.key === 'e') {
@@ -1192,6 +1698,8 @@ document.addEventListener('keydown', e => {
 function fullRender() {
   renderThemes();
   renderFormatSelector();
+  renderPositionPanel();
+  renderBackgroundPanel();
   renderTimeSlots();
   renderDays();
   renderSubjects();
@@ -1204,7 +1712,10 @@ loadState();
 loadFormFields();
 syncGradientPickers();
 fullRender();
+loadBackgroundImage();
+initWelcome();
 initDrag();
 initFileDrop();
+document.getElementById('uitmMatric').value = storageGet('tt-maker-matric') || '';
 window.addEventListener('beforeunload', () => { saveState(); });
 window.addEventListener('resize', updatePreviewScale);
