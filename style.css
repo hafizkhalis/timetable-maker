@@ -1330,3 +1330,6 @@ kbd {
   background: linear-gradient(rgba(12,12,28,var(--frost)), rgba(12,12,28,var(--frost))), rgba(255,255,255,0.07);
 }
 .phone-wrap.no-blobs .blob { display: none; }
+
+.export-img { display: block; max-width: 100%; max-height: 52vh; margin: 0 auto 14px; border-radius: 14px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.35); -webkit-touch-callout: default; user-select: auto; }
+.export-modal .import-note em { font-style: normal; font-weight: 700; color: var(--text-strong); }
