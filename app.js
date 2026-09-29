@@ -31,6 +31,8 @@ const EXPORT_FORMATS = [
   { key: 'desktop1610', name: 'Desktop 16:10', desc: '1920 × 1200', w: 960, h: 600, radius: 0,  exportScale: 2, fixed: true  },
 ];
 
+const VALIDATE_OPTS = { themeCount: THEMES.length, formatKeys: EXPORT_FORMATS.map(f => f.key) };
+
 /* ══════════════════════════════════════
    STATE
    ══════════════════════════════════════ */
@@ -82,46 +84,87 @@ let state = {
 /* ══════════════════════════════════════
    PERSISTENCE
    ══════════════════════════════════════ */
-function saveState() {
-  localStorage.setItem('tt-maker-state', JSON.stringify(state));
-  saveFormFields();
-}
+const FORM_FIELDS = ['groupName', 'semester', 'showHeader', 'showFooter', 'footerText', 'spacerTop', 'spacerBottom'];
+let storageWarned = false;
 
-function loadState() {
-  const s = localStorage.getItem('tt-maker-state');
-  if (s) {
-    try { state = { ...state, ...JSON.parse(s) }; } catch (e) { /* ignore */ }
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    if (!storageWarned) {
+      storageWarned = true;
+      showToast('Autosave is unavailable in this browser — use Save Schedule to keep your work');
+    }
+    return false;
   }
 }
 
-function saveFormFields() {
-  const fields = ['groupName', 'semester', 'showHeader', 'showFooter', 'footerText', 'spacerTop', 'spacerBottom'];
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
+function saveState() {
+  const ok = storageSet('tt-maker-state', JSON.stringify(state));
+  saveFormFields();
+  if (ok) updateSaveStatus();
+}
+
+function updateSaveStatus() {
+  const el = document.getElementById('saveStatus');
+  if (!el) return;
+  const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  el.textContent = `Autosaved in this browser · ${t}`;
+}
+
+function loadState() {
+  const s = storageGet('tt-maker-state');
+  if (s) {
+    let parsed = null;
+    try { parsed = JSON.parse(s); } catch (e) { /* handled below */ }
+    const res = parsed ? validateImport(parsed, VALIDATE_OPTS) : null;
+    if (res && res.ok) {
+      state = { ...state, ...res.state };
+    } else {
+      // keep the unreadable data around instead of overwriting it
+      storageSet('tt-maker-state-backup', s);
+      showToast('Saved data was unreadable — started fresh (backup kept)');
+    }
+  }
+  normalizeSchedule(state);
+}
+
+function readFormFields() {
   const data = {};
-  fields.forEach(f => {
+  FORM_FIELDS.forEach(f => {
     const el = document.getElementById(f);
     if (!el) return;
     data[f] = el.type === 'checkbox' ? el.checked : el.value;
   });
-  localStorage.setItem('tt-maker-form', JSON.stringify(data));
+  return data;
+}
+
+function saveFormFields() {
+  storageSet('tt-maker-form', JSON.stringify(readFormFields()));
+}
+
+function applyFormFields(data) {
+  Object.keys(data || {}).forEach(k => {
+    const el = document.getElementById(k);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!data[k];
+    else el.value = data[k];
+  });
+  const st = document.getElementById('spacerTop');
+  const sb = document.getElementById('spacerBottom');
+  if (st) document.getElementById('spacerTopVal').textContent = st.value;
+  if (sb) document.getElementById('spacerBottomVal').textContent = sb.value;
 }
 
 function loadFormFields() {
-  const s = localStorage.getItem('tt-maker-form');
+  const s = storageGet('tt-maker-form');
   if (!s) return;
-  try {
-    const data = JSON.parse(s);
-    Object.keys(data).forEach(k => {
-      const el = document.getElementById(k);
-      if (!el) return;
-      if (el.type === 'checkbox') el.checked = data[k];
-      else el.value = data[k];
-    });
-    // sync range display values
-    const st = document.getElementById('spacerTop');
-    const sb = document.getElementById('spacerBottom');
-    if (st) document.getElementById('spacerTopVal').textContent = st.value;
-    if (sb) document.getElementById('spacerBottomVal').textContent = sb.value;
-  } catch (e) { /* ignore */ }
+  try { applyFormFields(JSON.parse(s)); } catch (e) { /* ignore */ }
 }
 
 /* ══════════════════════════════════════
@@ -265,7 +308,7 @@ function removeTimeSlot(i) {
   if (state.timeSlots.length <= 1) return;
   state.timeSlots.splice(i, 1);
   for (const day of Object.keys(state.schedule)) {
-    if (state.schedule[day]) state.schedule[day].splice(i, 1);
+    if (state.schedule[day]) removeSlotFromDay(state.schedule[day], i);
   }
   saveState(); fullRender();
 }
@@ -407,43 +450,76 @@ function removeSubject(i) {
 let slotEditDay = null;
 let slotEditIdx = null;
 
+function subjectStyle(code) {
+  const subj = state.subjects.find(s => s.code === code);
+  return { bg: subj ? subj.color : '#666', tc: subj ? subj.textColor : '#fff' };
+}
+
+function slotRangeLabel(idx, span) {
+  const a = state.timeSlots[idx];
+  const b = state.timeSlots[idx + span - 1];
+  return span > 1 ? `${a} – ${b}` : a;
+}
+
+function renderClassPalette() {
+  const c = document.getElementById('classPalette');
+  if (!c) return;
+  if (!state.subjects.length) {
+    c.innerHTML = '<div class="palette-empty">No subjects yet — add some in the Design tab.</div>';
+    return;
+  }
+  const counts = {};
+  state.activeDays.forEach(d => (state.schedule[d] || []).forEach(e => { if (e) counts[e.subject] = (counts[e.subject] || 0) + 1; }));
+  c.innerHTML = state.subjects.map((s, i) => `
+    <div class="palette-chip" data-drag-subject="${i}" title="Drag onto the grid"
+         style="background:${hexToRgba(s.color, 0.3)};color:${s.textColor};border-color:${hexToRgba(s.color, 0.55)};">
+      <span class="pc-grip">⠿</span>
+      <span class="pc-code">${esc(s.code)}</span>
+      <span class="pc-count">${counts[s.code] || 0}×</span>
+    </div>`).join('');
+}
+
 function renderScheduleEditor() {
   const c = document.getElementById('scheduleEditor');
   const cols = state.timeSlots.length;
-  const gridCols = `60px ${'1fr '.repeat(cols).trim()}`;
+  const gridCols = `56px repeat(${cols}, minmax(92px, 1fr))`;
+  renderClassPalette();
 
   let html = `<div class="schedule-grid" style="grid-template-columns:${gridCols};">`;
-  // headers
-  html += `<div class="sched-header"></div>`;
+  html += `<div class="sched-header sched-sticky"></div>`;
   state.timeSlots.forEach(t => { html += `<div class="sched-header">${esc(t)}</div>`; });
 
-  // rows
   state.activeDays.forEach(dayKey => {
     const dayInfo = ALL_DAYS.find(d => d.key === dayKey);
     if (!state.schedule[dayKey]) state.schedule[dayKey] = state.timeSlots.map(() => null);
     while (state.schedule[dayKey].length < cols) state.schedule[dayKey].push(null);
 
-    html += `<div class="sched-day-label"><span style="color:${dayInfo.color};">\u25CF</span> ${dayInfo.label}</div>`;
+    html += `<div class="sched-day-label sched-sticky"><span style="color:${dayInfo.color};">●</span> ${dayInfo.label}</div>`;
 
-    state.timeSlots.forEach((_, si) => {
-      const slot = state.schedule[dayKey][si];
-      if (slot) {
-        const subj = state.subjects.find(s => s.code === slot.subject);
-        const bg = subj ? subj.color : '#666';
-        const tc = subj ? subj.textColor : '#fff';
-        html += `<div class="sched-cell has-class" onclick="openSlotModal('${dayKey}',${si})">
-          <div class="slot-card" style="background:${hexToRgba(bg, 0.35)};color:${tc};border:1px solid ${hexToRgba(bg, 0.4)};">
+    for (let si = 0; si < cols; si++) {
+      const occ = getOccupant(state.schedule, dayKey, si);
+      if (occ && occ.start < si) continue;              // covered by a longer class
+      if (occ) {
+        const slot = occ.entry;
+        const span = Math.min(slot.span || 1, cols - si);
+        const { bg, tc } = subjectStyle(slot.subject);
+        html += `<div class="sched-cell has-class" data-day="${dayKey}" data-slot="${si}" data-span="${span}"
+            style="grid-column:span ${span};" onclick="openSlotModal('${dayKey}',${si})">
+          <div class="slot-card" data-drag-entry style="background:${hexToRgba(bg, 0.35)};color:${tc};border:1px solid ${hexToRgba(bg, 0.4)};">
             <div class="sc-code">${esc(slot.subject)}</div>
-            <div class="sc-meta">${esc(slot.type)} &middot; ${esc(slot.room)}</div>
-            <button class="sc-clear" onclick="event.stopPropagation();clearSlot('${dayKey}',${si})">&times;</button>
+            <div class="sc-meta">${esc(slot.type)}${slot.room ? ' &middot; ' + esc(slot.room) : ''}</div>
+            ${slot.lecturer ? `<div class="sc-meta">${esc(slot.lecturer)}</div>` : ''}
+            ${span > 1 ? `<div class="sc-span">${esc(slotRangeLabel(si, span))}</div>` : ''}
+            <button class="sc-clear" title="Remove" onclick="event.stopPropagation();clearSlot('${dayKey}',${si})">&times;</button>
+            <span class="sc-resize" data-resize title="Drag to change duration"></span>
           </div>
         </div>`;
       } else {
-        html += `<div class="sched-cell" onclick="openSlotModal('${dayKey}',${si})">
+        html += `<div class="sched-cell" data-day="${dayKey}" data-slot="${si}" data-span="1" onclick="openSlotModal('${dayKey}',${si})">
           <span class="empty-label">+</span>
         </div>`;
       }
-    });
+    }
   });
   html += '</div>';
   c.innerHTML = html;
@@ -460,16 +536,27 @@ function openSlotModal(dayKey, slotIdx) {
   document.getElementById('slotModalTitle').textContent =
     `${dayInfo.label} — ${state.timeSlots[slotIdx] || ''}`;
 
-  // populate subject select
   const sel = document.getElementById('slotSubject');
   sel.innerHTML = state.subjects.map(s =>
     `<option value="${esc(s.code)}" ${current && current.subject === s.code ? 'selected' : ''}>${esc(s.code)}${s.fullName ? ' — ' + esc(s.fullName) : ''}</option>`
   ).join('');
 
-  document.getElementById('slotType').value = current ? current.type : 'Lecture';
+  const typeSel = document.getElementById('slotType');
+  const type = current ? current.type : 'Lecture';
+  if (![...typeSel.options].some(o => o.value === type)) typeSel.add(new Option(type, type));
+  typeSel.value = type;
   document.getElementById('slotRoom').value = current ? current.room : '';
-  document.getElementById('slotClearBtn').style.display = current ? 'inline-flex' : 'none';
+  document.getElementById('slotLecturer').value = current ? (current.lecturer || '') : '';
 
+  // duration: only lengths that fit without overlapping something else
+  const limit = maxSpan(state.schedule, state.timeSlots.length, dayKey, slotIdx, current || null);
+  const curSpan = current ? Math.min(current.span || 1, limit) : 1;
+  const spanSel = document.getElementById('slotSpan');
+  spanSel.innerHTML = Array.from({ length: limit }, (_, i) => i + 1).map(n =>
+    `<option value="${n}" ${n === curSpan ? 'selected' : ''}>${n} slot${n > 1 ? 's' : ''} (${esc(slotRangeLabel(slotIdx, n))})</option>`
+  ).join('');
+
+  document.getElementById('slotClearBtn').style.display = current ? 'inline-flex' : 'none';
   document.getElementById('slotModal').classList.add('open');
 }
 
@@ -480,12 +567,21 @@ function closeSlotModal() {
 function saveSlot() {
   if (!slotEditDay) return;
   const subject = document.getElementById('slotSubject').value;
-  const type = document.getElementById('slotType').value;
-  const room = document.getElementById('slotRoom').value.trim();
   if (!subject) return;
+  const span = parseInt(document.getElementById('slotSpan').value, 10) || 1;
+  const current = (state.schedule[slotEditDay] || [])[slotEditIdx] || null;
+
+  const check = canPlace(state.schedule, state.timeSlots.length, slotEditDay, slotEditIdx, span, current);
+  if (!check.ok) { showToast(check.reason); return; }
 
   if (!state.schedule[slotEditDay]) state.schedule[slotEditDay] = state.timeSlots.map(() => null);
-  state.schedule[slotEditDay][slotEditIdx] = { subject, type, room };
+  state.schedule[slotEditDay][slotEditIdx] = normalizeEntry({
+    subject,
+    type: document.getElementById('slotType').value,
+    room: document.getElementById('slotRoom').value.trim(),
+    lecturer: document.getElementById('slotLecturer').value.trim(),
+    span,
+  });
 
   closeSlotModal();
   saveState(); renderScheduleEditor(); render();
@@ -499,6 +595,229 @@ function clearSlotFromModal() {
 function clearSlot(dayKey, slotIdx) {
   if (state.schedule[dayKey]) state.schedule[dayKey][slotIdx] = null;
   saveState(); renderScheduleEditor(); render();
+}
+
+/* ══════════════════════════════════════
+   DRAG & DROP  (pointer events: mouse, pen and touch)
+   modes:  new    – palette chip  -> grid
+           move   – placed class  -> other slot / remove zone
+           resize – right-edge handle changes duration
+   Touch drags start after a short press so the page can still scroll.
+   ══════════════════════════════════════ */
+const DRAG_THRESHOLD = 6;
+const LONG_PRESS_MS = 220;
+let drag = null;
+let suppressClick = false;
+
+function slotFromPoint(x, y) {
+  const el = document.elementFromPoint(x, y);
+  const cell = el && el.closest ? el.closest('.sched-cell') : null;
+  if (!cell) return null;
+  const start = +cell.dataset.slot;
+  const span = +cell.dataset.span || 1;
+  const r = cell.getBoundingClientRect();
+  const off = Math.max(0, Math.min(span - 1, Math.floor((x - r.left) / (r.width / span))));
+  return { day: cell.dataset.day, slot: start + off };
+}
+
+function cellAt(day, slot) {
+  const occ = getOccupant(state.schedule, day, slot);
+  const idx = occ ? occ.start : slot;
+  return document.querySelector(`.sched-cell[data-day="${day}"][data-slot="${idx}"]`);
+}
+
+function onDragPointerDown(e) {
+  if (e.button > 0 || drag) return;
+  if (e.target.closest('.sc-clear')) return;
+  const resize = e.target.closest('[data-resize]');
+  const cardEl = e.target.closest('[data-drag-entry]');
+  const chip = e.target.closest('[data-drag-subject]');
+  if (!cardEl && !chip) return;
+
+  drag = { active: false, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, touch: e.pointerType === 'touch', ghost: null, target: null, timer: null, scroller: null };
+  if (chip) {
+    drag.mode = 'new';
+    drag.subject = state.subjects[+chip.dataset.dragSubject].code;
+    drag.srcEl = chip;
+  } else {
+    const cell = cardEl.closest('.sched-cell');
+    drag.mode = resize ? 'resize' : 'move';
+    drag.day = cell.dataset.day;
+    drag.start = +cell.dataset.slot;
+    drag.entry = state.schedule[drag.day][drag.start];
+    drag.subject = drag.entry.subject;
+    drag.srcEl = cardEl;
+    const sl = slotFromPoint(e.clientX, e.clientY);
+    drag.grab = sl && sl.day === drag.day ? Math.max(0, Math.min(drag.entry.span - 1, sl.slot - drag.start)) : 0;
+  }
+  if (drag.touch && drag.mode !== 'resize') {
+    drag.timer = setTimeout(() => { if (drag && !drag.active) activateDrag(); }, LONG_PRESS_MS);
+  }
+}
+
+function onDragPointerMove(e) {
+  if (!drag) return;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (!drag.active) {
+    const moved = Math.hypot(drag.x - drag.sx, drag.y - drag.sy);
+    if (drag.touch && drag.mode !== 'resize') {
+      if (moved > 10) endDrag();                     // finger is scrolling, not dragging
+    } else if (moved > DRAG_THRESHOLD) {
+      activateDrag();
+    }
+    return;
+  }
+  e.preventDefault();
+  updateDragTarget();
+}
+
+function activateDrag() {
+  clearTimeout(drag.timer);
+  drag.active = true;
+  document.body.classList.add('dragging');
+  if (drag.srcEl) drag.srcEl.classList.add('drag-source');
+  if (drag.mode === 'move') document.getElementById('removeZone').classList.add('show');
+
+  const { bg, tc } = subjectStyle(drag.subject);
+  const g = document.createElement('div');
+  g.className = 'drag-ghost';
+  g.style.background = hexToRgba(bg, 0.85);
+  g.style.color = tc;
+  g.innerHTML = `<b></b><span class="gh-msg"></span>`;
+  g.firstChild.textContent = drag.mode === 'resize' ? 'Duration' : drag.subject;
+  document.body.appendChild(g);
+  drag.ghost = g;
+  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) { /* ignore */ } }
+  drag.scroller = setInterval(autoScrollTick, 30);
+  updateDragTarget();
+}
+
+function computeTarget() {
+  const cols = state.timeSlots.length;
+  const rz = document.getElementById('removeZone');
+  if (drag.mode === 'move') {
+    const r = rz.getBoundingClientRect();
+    if (drag.x >= r.left && drag.x <= r.right && drag.y >= r.top && drag.y <= r.bottom) return { remove: true };
+  }
+  const sl = slotFromPoint(drag.x, drag.y);
+  if (drag.mode === 'resize') {
+    if (!sl || sl.day !== drag.day) return drag.target;   // keep last valid length while pointer is elsewhere
+    const span = Math.max(1, sl.slot - drag.start + 1);
+    return { day: drag.day, start: drag.start, span, check: canPlace(state.schedule, cols, drag.day, drag.start, span, drag.entry) };
+  }
+  if (!sl) return null;
+  if (drag.mode === 'new') {
+    return { day: sl.day, start: sl.slot, span: 1, check: canPlace(state.schedule, cols, sl.day, sl.slot, 1, null) };
+  }
+  const span = drag.entry.span;
+  const start = Math.max(0, Math.min(cols - span, sl.slot - drag.grab));
+  return { day: sl.day, start, span, check: canPlace(state.schedule, cols, sl.day, start, span, drag.entry) };
+}
+
+function updateDragTarget() {
+  const g = drag.ghost;
+  g.style.transform = `translate(${drag.x + 14}px, ${drag.y + 14}px)`;
+  const t = computeTarget();
+  drag.target = t;
+
+  document.querySelectorAll('.drop-ok, .drop-bad').forEach(el => el.classList.remove('drop-ok', 'drop-bad'));
+  document.getElementById('removeZone').classList.toggle('hot', !!(t && t.remove));
+  const msg = g.querySelector('.gh-msg');
+  g.classList.toggle('bad', !!(t && t.check && !t.check.ok));
+
+  if (!t) { msg.textContent = drag.mode === 'new' ? 'Drop on the grid' : ''; return; }
+  if (t.remove) { msg.textContent = 'Release to remove'; return; }
+
+  const cls = t.check.ok ? 'drop-ok' : 'drop-bad';
+  for (let j = t.start; j < t.start + t.span; j++) {
+    const el = cellAt(t.day, j);
+    if (el) el.classList.add(cls);
+  }
+  if (t.check.ok) {
+    const day = ALL_DAYS.find(d => d.key === t.day).label;
+    msg.textContent = `${day} · ${slotRangeLabel(t.start, t.span)}`;
+  } else {
+    msg.textContent = t.check.reason;
+  }
+}
+
+function autoScrollTick() {
+  if (!drag || !drag.active) return;
+  const EDGE = 56, STEP = 14;
+  if (drag.y < EDGE) window.scrollBy(0, -STEP);
+  else if (drag.y > window.innerHeight - EDGE) window.scrollBy(0, STEP);
+  const ed = document.getElementById('scheduleEditor');
+  const r = ed.getBoundingClientRect();
+  if (drag.y >= r.top - 20 && drag.y <= r.bottom + 20) {
+    if (drag.x < r.left + EDGE) ed.scrollLeft -= STEP;
+    else if (drag.x > r.right - EDGE) ed.scrollLeft += STEP;
+  }
+  updateDragTarget();
+}
+
+function onDragPointerUp() {
+  if (!drag) return;
+  if (!drag.active) { endDrag(); return; }
+  const d = drag, t = drag.target;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 120);
+  endDrag();
+  commitDrop(d, t);
+}
+
+function commitDrop(d, t) {
+  if (!t) {
+    if (d.mode === 'new') showToast('Drop the class onto a day/time cell');
+    return;
+  }
+  if (t.remove) {
+    state.schedule[d.day][d.start] = null;
+    showToast(`Removed ${d.subject}`);
+  } else if (!t.check.ok) {
+    showToast(t.check.reason);
+    return;
+  } else if (d.mode === 'new') {
+    state.schedule[t.day][t.start] = normalizeEntry({ subject: d.subject, type: 'Lecture' });
+    showToast(`Added ${d.subject} · ${ALL_DAYS.find(x => x.key === t.day).label} ${state.timeSlots[t.start]}`);
+  } else if (d.mode === 'move') {
+    if (t.day === d.day && t.start === d.start) return;
+    state.schedule[d.day][d.start] = null;
+    state.schedule[t.day][t.start] = d.entry;
+    showToast(`Moved ${d.subject} to ${ALL_DAYS.find(x => x.key === t.day).label} ${state.timeSlots[t.start]}`);
+  } else if (d.mode === 'resize') {
+    if (d.entry.span === t.span) return;
+    d.entry.span = t.span;
+    showToast(`${d.subject}: ${t.span} slot${t.span > 1 ? 's' : ''}`);
+  }
+  saveState(); renderScheduleEditor(); render();
+}
+
+function endDrag() {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  clearInterval(drag.scroller);
+  if (drag.ghost) drag.ghost.remove();
+  if (drag.srcEl) drag.srcEl.classList.remove('drag-source');
+  document.querySelectorAll('.drop-ok, .drop-bad').forEach(el => el.classList.remove('drop-ok', 'drop-bad'));
+  const rz = document.getElementById('removeZone');
+  rz.classList.remove('show', 'hot');
+  document.body.classList.remove('dragging');
+  drag = null;
+}
+
+function initDrag() {
+  document.addEventListener('pointerdown', onDragPointerDown);
+  document.addEventListener('pointermove', onDragPointerMove, { passive: false });
+  document.addEventListener('pointerup', onDragPointerUp);
+  document.addEventListener('pointercancel', endDrag);
+  // once a touch drag is active, stop the page from scrolling under the finger
+  document.addEventListener('touchmove', e => { if (drag && drag.active) e.preventDefault(); }, { passive: false });
+  document.addEventListener('contextmenu', e => {
+    if (drag && e.target.closest('[data-drag-subject],[data-drag-entry]')) e.preventDefault();
+  });
+  document.addEventListener('click', e => {
+    if (suppressClick) { e.stopPropagation(); e.preventDefault(); suppressClick = false; }
+  }, true);
 }
 
 /* ══════════════════════════════════════
@@ -606,31 +925,31 @@ function render() {
   // day rows
   state.activeDays.forEach(dayKey => {
     const dayInfo = ALL_DAYS.find(d => d.key === dayKey);
-    const slots = state.schedule[dayKey] || [];
-
     html += `<div class="grid-row day-row" style="grid-template-columns:${gridCols};">
       <div class="day-label">
         <div class="day-abbr">${dayInfo.label}</div>
         <div class="day-dot" style="background:${dayInfo.color};"></div>
       </div>`;
 
-    state.timeSlots.forEach((_, si) => {
-      const slot = slots[si];
-      if (slot) {
-        const subj = state.subjects.find(s => s.code === slot.subject);
-        const bg = subj ? subj.color : '#666';
-        const tc = subj ? subj.textColor : '#fff';
-        html += `<div class="cell">
+    for (let si = 0; si < cols; si++) {
+      const occ = getOccupant(state.schedule, dayKey, si);
+      if (occ && occ.start < si) continue;              // covered by a longer class
+      if (occ) {
+        const slot = occ.entry;
+        const span = Math.min(slot.span || 1, cols - si);
+        const { bg, tc } = subjectStyle(slot.subject);
+        html += `<div class="cell" style="${span > 1 ? `grid-column:span ${span};` : ''}">
           <div class="class-pill" style="background:${hexToRgba(bg, 0.40)};color:${tc};border:1px solid ${hexToRgba(bg, 0.45)};">
             <div class="pill-code">${esc(slot.subject)}</div>
             <div class="pill-type">${esc(slot.type)}</div>
             <div class="pill-room">${esc(slot.room)}</div>
+            ${slot.lecturer ? `<div class="pill-lect">${esc(slot.lecturer)}</div>` : ''}
           </div>
         </div>`;
       } else {
         html += `<div class="cell empty"></div>`;
       }
-    });
+    }
     html += `</div>`;
   });
 
@@ -674,59 +993,131 @@ async function exportPNG() {
 }
 
 /* ══════════════════════════════════════
-   IMPORT / EXPORT JSON
+   SAVE / LOAD SCHEDULE DATA (JSON)
    ══════════════════════════════════════ */
+let pendingImport = null;
+
 function exportJSON() {
-  const formFields = {};
-  ['groupName', 'semester', 'showHeader', 'showFooter', 'footerText', 'spacerTop', 'spacerBottom'].forEach(f => {
-    const el = document.getElementById(f);
-    if (el) formFields[f] = el.type === 'checkbox' ? el.checked : el.value;
-  });
-  const data = { state, formFields, version: 1 };
+  const data = buildExport(state, readFormFields());
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const name = (data.meta.groupName || 'timetable').replace(/[^\w.-]+/g, '_');
   const link = document.createElement('a');
-  link.download = `${formFields.groupName || 'timetable'}_data.json`;
+  link.download = `${name}_schedule.json`;
   link.href = URL.createObjectURL(blob);
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
-  showToast('JSON exported');
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  showToast(`Schedule saved (${data.schedule.length} classes)`);
+}
+
+function pickImportFile() {
+  document.getElementById('importFile').click();
 }
 
 function importJSON(event) {
   const file = event.target.files[0];
-  if (!file) return;
+  event.target.value = '';
+  if (file) readImportFile(file);
+}
+
+function readImportFile(file) {
+  if (file.size > 2 * 1024 * 1024) {
+    showImportError(['The file is larger than 2 MB — that is not a timetable file.']);
+    return;
+  }
   const reader = new FileReader();
-  reader.onload = function (e) {
+  reader.onerror = () => showImportError(['The file could not be read.']);
+  reader.onload = e => {
+    let data;
     try {
-      const data = JSON.parse(e.target.result);
-      if (data.state) state = { ...state, ...data.state };
-      if (data.formFields) {
-        Object.keys(data.formFields).forEach(k => {
-          const el = document.getElementById(k);
-          if (!el) return;
-          if (el.type === 'checkbox') el.checked = data.formFields[k];
-          else el.value = data.formFields[k];
-        });
-        const st = document.getElementById('spacerTop');
-        const sb = document.getElementById('spacerBottom');
-        if (st) document.getElementById('spacerTopVal').textContent = st.value;
-        if (sb) document.getElementById('spacerBottomVal').textContent = sb.value;
-      }
-      saveState();
-      fullRender();
-      showToast('Timetable imported!');
+      data = JSON.parse(e.target.result);
     } catch (err) {
-      showToast('Invalid JSON file');
+      showImportError([`"${file.name}" is not valid JSON, so it cannot be a saved timetable.`]);
+      return;
     }
+    const res = validateImport(data, VALIDATE_OPTS);
+    if (!res.ok) { showImportError(res.errors); return; }
+    pendingImport = res;
+    showImportConfirm(res, file.name);
   };
   reader.readAsText(file);
-  event.target.value = '';
+}
+
+function openImportModal(title, bodyHtml, confirmable) {
+  document.getElementById('importTitle').textContent = title;
+  document.getElementById('importBody').innerHTML = bodyHtml;
+  document.getElementById('importApplyBtn').style.display = confirmable ? 'inline-flex' : 'none';
+  document.getElementById('importCancelBtn').textContent = confirmable ? 'Cancel' : 'Close';
+  document.getElementById('importModal').classList.add('open');
+}
+
+function closeImportModal() {
+  document.getElementById('importModal').classList.remove('open');
+  pendingImport = null;
+}
+
+function showImportError(errors) {
+  pendingImport = null;
+  openImportModal("Can't load this file",
+    `<p class="import-note">Nothing was changed. Problems found:</p>
+     <ul class="import-errors">${errors.map(m => `<li>${esc(m)}</li>`).join('')}</ul>`, false);
+}
+
+function showImportConfirm(res, fileName) {
+  const count = res.state.activeDays.reduce((n, d) => n + res.state.schedule[d].filter(Boolean).length, 0);
+  const name = res.meta.groupName ? ` for <b>${esc(res.meta.groupName)}</b>` : '';
+  openImportModal('Load this schedule?',
+    `<p class="import-note">${esc(fileName)}${name}: ${count} class${count === 1 ? '' : 'es'},
+     ${res.state.subjects.length} subjects, ${res.state.activeDays.length} days, ${res.state.timeSlots.length} time slots.</p>
+     <p class="import-note">This replaces your current timetable.</p>`, true);
+}
+
+function applyImport() {
+  if (!pendingImport) return;
+  const res = pendingImport;
+  state = { ...state, ...res.state };
+  normalizeSchedule(state);
+  applyFormFields(res.meta);
+  syncGradientPickers();
+  closeImportModal();
+  saveState();
+  fullRender();
+  showToast('Schedule loaded!');
+}
+
+function syncGradientPickers() {
+  const g = state.customGradient || (() => { const t = THEMES[state.theme] || THEMES[0]; return [t.stops[0], t.stops[2] || t.stops[1], t.stops[t.stops.length - 1]]; })();
+  document.getElementById('gradStart').value = g[0];
+  document.getElementById('gradMid').value = g[1];
+  document.getElementById('gradEnd').value = g[2];
+  updateGradHex();
+}
+
+// Drop a .json file anywhere on the page to load it
+function initFileDrop() {
+  const overlay = document.getElementById('fileDropOverlay');
+  const hasFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  let depth = 0;
+  window.addEventListener('dragenter', e => { if (hasFiles(e)) { depth++; overlay.classList.add('show'); } });
+  window.addEventListener('dragleave', e => { if (hasFiles(e) && --depth <= 0) { depth = 0; overlay.classList.remove('show'); } });
+  window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    overlay.classList.remove('show');
+    const f = e.dataTransfer.files[0];
+    if (f) readImportFile(f);
+  });
 }
 
 function resetAll() {
   if (!confirm('Reset everything to default? This cannot be undone.')) return;
-  localStorage.removeItem('tt-maker-state');
-  localStorage.removeItem('tt-maker-form');
+  try {
+    localStorage.removeItem('tt-maker-state');
+    localStorage.removeItem('tt-maker-form');
+  } catch (e) { /* ignore */ }
   location.reload();
 }
 
@@ -778,8 +1169,10 @@ function showToast(msg) {
 document.addEventListener('keydown', e => {
   // Escape to close modals
   if (e.key === 'Escape') {
+    if (drag) { endDrag(); return; }
     closeSubjectModal();
     closeSlotModal();
+    closeImportModal();
   }
   // Ctrl+E to export
   if (e.ctrlKey && e.key === 'e') {
@@ -809,6 +1202,9 @@ function fullRender() {
 // Init
 loadState();
 loadFormFields();
-updateGradHex();
+syncGradientPickers();
 fullRender();
+initDrag();
+initFileDrop();
+window.addEventListener('beforeunload', () => { saveState(); });
 window.addEventListener('resize', updatePreviewScale);

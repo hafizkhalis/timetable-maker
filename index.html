@@ -87,10 +87,28 @@
 
     <!-- ═══ SCHEDULE TAB ═══ -->
     <div class="tab-content" id="tab-schedule">
+      <!-- Save / Load -->
+      <div class="panel">
+        <div class="panel-title">Save &amp; Load</div>
+        <p class="panel-hint">Your work is autosaved in this browser. Save a file to keep a backup or move to another device &mdash; you can also drop a saved <code>.json</code> file anywhere on this page.</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="exportJSON()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Save Schedule</button>
+          <button class="btn btn-secondary" onclick="pickImportFile()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Load Schedule</button>
+        </div>
+        <div class="save-status" id="saveStatus"></div>
+      </div>
+
+      <!-- Class palette -->
+      <div class="panel">
+        <div class="panel-title">Classes</div>
+        <p class="panel-hint">Drag a class onto the grid (touch: press and hold, then drag).</p>
+        <div id="classPalette" class="class-palette"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-title">Schedule Grid</div>
-        <p class="panel-hint">Click a cell to assign a class. Click &times; to clear.</p>
-        <div id="scheduleEditor"></div>
+        <p class="panel-hint">Drop classes on a cell, drag placed classes to reschedule, drag the right edge to change duration, or drop them on the red bar to remove. Click a cell to edit details.</p>
+        <div id="scheduleEditor" class="schedule-scroll"></div>
       </div>
 
       <!-- Stats -->
@@ -157,13 +175,13 @@
         <div class="btn-row">
           <button class="btn btn-secondary" onclick="exportJSON()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export JSON
+            Save Schedule (.json)
           </button>
-          <button class="btn btn-secondary" onclick="document.getElementById('importFile').click()">
+          <button class="btn btn-secondary" onclick="pickImportFile()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Import JSON
+            Load Schedule (.json)
           </button>
-          <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)" />
+          <input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="importJSON(event)" />
           <button class="btn btn-danger" onclick="resetAll()">Reset All</button>
         </div>
       </div>
@@ -252,6 +270,16 @@
         <input type="text" id="slotRoom" placeholder="e.g. MK C3, Virtual" />
       </div>
     </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Lecturer (optional)</label>
+        <input type="text" id="slotLecturer" placeholder="e.g. Dr. Aisyah" />
+      </div>
+      <div class="form-group">
+        <label>Duration</label>
+        <select id="slotSpan"></select>
+      </div>
+    </div>
     <div class="btn-row" style="margin-top:16px; justify-content:flex-end;">
       <button class="btn btn-secondary" onclick="closeSlotModal()">Cancel</button>
       <button class="btn btn-danger" id="slotClearBtn" onclick="clearSlotFromModal()" style="display:none;">Clear</button>
@@ -260,9 +288,26 @@
   </div>
 </div>
 
+<!-- ── Import Modal ── -->
+<div class="modal-overlay" id="importModal" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal">
+    <h3 id="importTitle">Load schedule</h3>
+    <div id="importBody"></div>
+    <div class="btn-row" style="margin-top:16px; justify-content:flex-end;">
+      <button class="btn btn-secondary" id="importCancelBtn" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" id="importApplyBtn" onclick="applyImport()">Replace timetable</button>
+    </div>
+  </div>
+</div>
+
+<!-- Drag helpers -->
+<div id="removeZone" class="remove-zone">Drop here to remove</div>
+<div id="fileDropOverlay" class="file-drop-overlay"><div>Drop your saved schedule (.json) to load it</div></div>
+
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
+<script src="model.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
