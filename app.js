@@ -1395,14 +1395,75 @@ function renderBackgroundPanel() {
 /* ══════════════════════════════════════
    EXPORT PNG
    ══════════════════════════════════════ */
+function isMobileBrowser() {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));     // iPadOS reports as a Mac
+}
+
+function isInAppBrowser() {
+  return /FBAN|FBAV|Instagram|Line\/|MicroMessenger|Telegram|Snapchat|TikTok|Twitter/i.test(navigator.userAgent);
+}
+
+/** Plain download for desktop browsers (also used as a fallback on phones). */
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = url;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+let exportResult = null;
+
+/**
+ * Phones: the render takes a second or two, so by the time it finishes the browser no longer treats a
+ * scripted download as coming from the user's tap and blocks it. Instead show the finished image with
+ * real buttons (each a fresh tap) and a press-and-hold fallback that works in every browser.
+ */
+function showExportResult(blob, filename) {
+  const img = document.getElementById('exportImg');
+  if (exportResult) URL.revokeObjectURL(exportResult.url);
+  exportResult = { blob, filename, url: URL.createObjectURL(blob) };
+  img.src = exportResult.url;
+  const file = new File([blob], filename, { type: 'image/png' });
+  const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+  document.getElementById('exportShareBtn').style.display = canShare ? 'inline-flex' : 'none';
+  document.getElementById('exportInApp').hidden = !isInAppBrowser();
+  document.getElementById('exportModal').classList.add('open');
+}
+
+function closeExportModal() {
+  document.getElementById('exportModal').classList.remove('open');
+  if (exportResult) { URL.revokeObjectURL(exportResult.url); exportResult = null; document.getElementById('exportImg').removeAttribute('src'); }
+}
+
+async function shareExport() {
+  if (!exportResult) return;
+  const file = new File([exportResult.blob], exportResult.filename, { type: 'image/png' });
+  try {
+    await navigator.share({ files: [file], title: 'My timetable wallpaper' });
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast('Sharing failed \u2014 press and hold the image to save it instead.');
+  }
+}
+
+function downloadExport() {
+  if (exportResult) downloadBlob(exportResult.blob, exportResult.filename);
+}
+
 async function exportPNG() {
   const target = document.getElementById('exportTarget');
   if (!target) return;
   showToast('Generating PNG...');
   try {
     const fmt = getFormat();
+    // stay under the ~16 megapixel canvas limit of mobile browsers
+    const scale = Math.min(fmt.exportScale, Math.sqrt(16e6 / (fmt.w * fmt.h)));
     const canvas = await html2canvas(target, {
-      scale: fmt.exportScale,
+      scale,
       backgroundColor: null,
       useCORS: true,
       logging: false,
@@ -1414,12 +1475,17 @@ async function exportPNG() {
         if (sc) { sc.style.width = 'auto'; sc.style.height = 'auto'; sc.style.overflow = 'visible'; }
       },
     });
-    const link = document.createElement('a');
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('the image was too large for this device \u2014 try a smaller format');
     const name = document.getElementById('groupName').value || 'timetable';
-    link.download = `${name}_${fmt.key}_timetable.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-    showToast('Wallpaper downloaded \u2713');
+    const filename = `${name}_${fmt.key}_timetable.png`;
+    if (isMobileBrowser()) {
+      showToast('Your wallpaper is ready \u2713');
+      showExportResult(blob, filename);
+    } else {
+      downloadBlob(blob, filename);
+      showToast('Wallpaper downloaded \u2713');
+    }
   } catch (e) {
     showToast('Export failed: ' + e.message);
   }
@@ -1679,6 +1745,7 @@ document.addEventListener('keydown', e => {
     closeSlotModal();
     closeImportModal();
     closeHelp();
+    closeExportModal();
   }
   // Ctrl+E to export
   if (e.ctrlKey && e.key === 'e') {

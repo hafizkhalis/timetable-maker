@@ -401,6 +401,21 @@
   </div>
 </div>
 
+<!-- ── Export result (phones) ── -->
+<div class="modal-overlay" id="exportModal" onclick="if(event.target===this)closeExportModal()">
+  <div class="modal wide export-modal" role="dialog" aria-labelledby="exportTitle">
+    <h3 id="exportTitle">Your wallpaper is ready</h3>
+    <img id="exportImg" class="export-img" alt="Your exported timetable wallpaper" />
+    <p class="import-note"><b>To save it:</b> tap <em>Save / Share</em> and choose <em>Save Image</em>, or press and hold the picture and choose <em>Save to Photos</em> / <em>Download image</em>.</p>
+    <p class="import-note" id="exportInApp" hidden>You seem to be inside another app&rsquo;s browser. If saving doesn&rsquo;t work, open this page in Safari or Chrome.</p>
+    <div class="btn-row" style="justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeExportModal()">Close</button>
+      <button class="btn btn-secondary" onclick="downloadExport()">Download</button>
+      <button class="btn btn-primary" id="exportShareBtn" onclick="shareExport()">Save / Share</button>
+    </div>
+  </div>
+</div>
+
 <!-- Drag helpers -->
 <div id="removeZone" class="remove-zone">Drop here to remove</div>
 <div id="fileDropOverlay" class="file-drop-overlay"><div>Drop a timetable file (.json) to load it, or a photo to use as your background</div></div>
